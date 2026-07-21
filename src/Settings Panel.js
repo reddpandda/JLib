@@ -3,13 +3,13 @@
  * JLib.dom (el/h), JLib.settingsSchema (storage), JLib.utils (debounce).
  * @require all three before this file.
  *
- * Generalized from the Streaming Suite script's panel — same visual
- * design (sidebar + right pane, scroll-shadow, focus trap, keyboard
- * shortcut, per-scope storage, import/export), but every site-specific
- * name is gone: SITE -> scope, SITE_LABELS -> config.scopes, FEATURES ->
- * config.features, "Websites" nav -> generic scope-switcher, "About" ->
- * an optional extraSection the caller supplies content for instead of
- * baked-in credit text.
+ * Generalized from an existing, already-shipped userscript's settings
+ * panel — same visual design (sidebar + right pane, scroll-shadow, focus
+ * trap, keyboard shortcut, per-scope storage, import/export), but every
+ * site-specific name is gone: SITE -> scope, SITE_LABELS -> config.scopes,
+ * FEATURES -> config.features, "Websites" nav -> generic scope-switcher,
+ * "About" -> an optional extraSection the caller supplies content for
+ * instead of baked-in credit text.
  *
  * FEATURE TYPES: boolean, enum, number, text, action, custom.
  *   - boolean/enum are the original two.
