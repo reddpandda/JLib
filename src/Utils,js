@@ -3,13 +3,13 @@
  * privileged APIs — safe in any context (extension background page or
  * userscript sandbox).
  *
- * debounce() is the formalized version of the clearTimeout/setTimeout
- * pattern the Streaming Suite script hand-rolls inline for its
+ * debounce() is the formalized version of a clearTimeout/setTimeout
+ * pattern an existing userscript hand-rolls inline for its
  * MutationObserver callback (`clearTimeout(observerTimeout);
  * observerTimeout = setTimeout(processPage, 100)`) — same behavior,
  * reusable instead of retyped per script. throttle() is new, same family.
- * makeLogger() formalizes the `[Streaming Suite v${SCRIPT_VERSION}]`
- * prefix convention used throughout that script's console.log calls.
+ * makeLogger() formalizes a `[ScriptName vX.Y.Z]` console-prefix
+ * convention used throughout that same script.
  */
 var JLib = typeof JLib !== 'undefined' ? JLib : {};
 
@@ -67,10 +67,9 @@ JLib.utils = (function () {
     return throttled;
   }
 
-  // makeLogger('Streaming Suite', '2.3.0') -> { log, warn, error }, each
-  // prefixed with '[Streaming Suite v2.3.0]' exactly like the source
-  // script's hand-typed prefixes. version is optional — omit it for a
-  // plain '[Streaming Suite]' prefix.
+  // makeLogger('MyScript', '2.3.0') -> { log, warn, error }, each
+  // prefixed with '[MyScript v2.3.0]'. version is optional — omit it for
+  // a plain '[MyScript]' prefix.
   function makeLogger(name, version) {
     const prefix = version ? `[${name} v${version}]` : `[${name}]`;
     return {
