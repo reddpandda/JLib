@@ -3,11 +3,10 @@
  * Pure DOM construction, no privileged APIs. @require this directly into
  * any userscript.
  *
- * el()/h() is ported near-verbatim from the Streaming Suite script
- * (opts: className/id/dataset/attrs, children: array) rather than
- * reinvented — that's the version with actual mileage on it across a real,
- * shipped settings panel.  $/$$ and toast() are new, built to match its
- * conventions.
+ * el()/h() is ported near-verbatim from an existing, already-shipped
+ * userscript (opts: className/id/dataset/attrs, children: array) rather
+ * than reinvented — that's the version with actual production mileage on
+ * it. $/$$ and toast() are new, built to match its conventions.
  */
 var JLib = typeof JLib !== 'undefined' ? JLib : {};
 
@@ -36,10 +35,10 @@ JLib.dom = (function () {
   }
 
   // Event listeners aren't part of opts (same convention as the source
-  // script) — attach with .addEventListener on the returned node, same as
-  // every call site in Streaming Suite does today. Keeping it that way
-  // rather than adding onClick-style magic keeps this a drop-in match for
-  // code you already know how to read.
+  // script this was ported from) — attach with .addEventListener on the
+  // returned node instead. Keeping it that way rather than adding
+  // onClick-style magic keeps this a drop-in match for code you already
+  // know how to read.
   const h = el;
 
   function $(selector, root) {
