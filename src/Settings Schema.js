@@ -3,9 +3,10 @@
  * per-scope storage, parent/child dependency enforcement, and migration
  * support. Requires @grant GM_setValue / @grant GM_getValue.
  *
- * Generalized directly from the Streaming Suite script's FEATURES array +
- * loadSiteSettings/saveSiteSettings/enforceFeatureDependencies/
- * migrateAutoplaySettings — that pattern had real mileage across three
+ * Generalized directly from an existing, already-shipped userscript's
+ * FEATURES array + loadSiteSettings/saveSiteSettings/
+ * enforceFeatureDependencies/migrateAutoplaySettings — that pattern had
+ * real mileage across three
  * settings-storage bugs already found and fixed (shared-storage-across-
  * sites, parent-gating, stale-key migration), so this ports the shape
  * rather than redesigning it. What's generalized: "site" becomes "scope"
@@ -25,7 +26,7 @@ JLib.settingsSchema = (function () {
   //   `false` whenever its parent is false (enforceDependencies).
   // options.storageKeyPrefix: required. Storage key is
   //   `${prefix}` with no scope, or `${prefix}_${scope}` with one — same
-  //   shape as Streaming Suite's `'streamingSuiteSettings_' + SITE`.
+  //   shape as the source script's `'<name>Settings_' + SITE` pattern.
   // options.migrate: optional `(rawParsedObj) => rawParsedObj`, run on the
   //   raw parsed blob BEFORE the defaults-filtered merge — same ordering
   //   requirement as migrateAutoplaySettings, since the merge only copies
