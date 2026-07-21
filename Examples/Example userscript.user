@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         JLib Example
-// @namespace    local.jordan.jlib-example
+// @namespace    https://github.com/reddpandda/JLib
 // @version      1.0.0
 // @description  Reference implementation showing how a userscript consumes all five JLib files together.
 // @match        *://*/*
@@ -9,14 +9,14 @@
 // @grant        GM_registerMenuCommand
 // ==/UserScript==
 //
-// Once the repo is tagged, swap these @require paths for pinned jsDelivr
-// URLs (see README.md) instead of local file:// paths:
-//   https://cdn.jsdelivr.net/gh/YOUR_USERNAME/YOUR_REPO@1.0.0/src/dom-toolkit.js
-// @require      file:///PATH_TO_REPO/src/dom-toolkit.js
-// @require      file:///PATH_TO_REPO/src/settings-schema.js
-// @require      file:///PATH_TO_REPO/src/utils.js
-// @require      file:///PATH_TO_REPO/src/settings-panel.js
-// @require      file:///PATH_TO_REPO/src/event-delegation.js
+// Swap v1.0.0 below for whatever tag you've actually cut (see README.md
+// "Cut a version tag before depending on this anywhere"). Never leave a
+// script pointed at @main — see the README for why.
+// @require      https://cdn.jsdelivr.net/gh/reddpandda/JLib@v1.0.0/src/dom-toolkit.js
+// @require      https://cdn.jsdelivr.net/gh/reddpandda/JLib@v1.0.0/src/settings-schema.js
+// @require      https://cdn.jsdelivr.net/gh/reddpandda/JLib@v1.0.0/src/utils.js
+// @require      https://cdn.jsdelivr.net/gh/reddpandda/JLib@v1.0.0/src/settings-panel.js
+// @require      https://cdn.jsdelivr.net/gh/reddpandda/JLib@v1.0.0/src/event-delegation.js
 
 (function () {
   'use strict';
@@ -26,8 +26,7 @@
   // ============ SETTINGS PANEL ============
   // Single implicit scope here (no `scopes` passed) — this is the plain
   // starting template. Pass `scopes`/`getCurrentScope` if your script runs
-  // across multiple sites and needs the scope-switcher sidebar, the way
-  // the source Streaming Suite script did.
+  // across multiple sites and needs the scope-switcher sidebar.
   const panel = JLib.settingsPanel.create({
     namespace: 'jlibExample',
     title: 'JLib Example Settings',
@@ -152,8 +151,8 @@
   });
 
   // ============ DEBOUNCE ============
-  // Same shape as the clearTimeout/setTimeout pattern this formalizes —
-  // scan() only actually runs once mutations settle, not on every single one.
+  // A burst of mutations resets the timer each time; scan() only actually
+  // runs once mutations settle, not on every single one.
   const debouncedScan = JLib.utils.debounce(() => {
     const settings = panel.getSettings();
     if (!settings.enableFeature) return;
@@ -164,7 +163,7 @@
   observer.observe(document.body, { childList: true, subtree: true });
 
   // Cleanup path — every listener/observer this script starts gets a way
-  // to stop, per the "every timer/observer has an exit" convention.
+  // to stop.
   window.addEventListener('beforeunload', () => {
     offClick();
     observer.disconnect();
