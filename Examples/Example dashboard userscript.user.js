@@ -2,6 +2,7 @@
 // @name         JLib Example — Dashboard (2+ modules)
 // @namespace    reddpandda
 // @version      3.0.0
+// @match        *://*/*
 // @grant        GM_getValue
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
