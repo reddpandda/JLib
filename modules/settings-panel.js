@@ -1,20 +1,31 @@
 /*
  * Settings Panel — modules/settings-panel.js
  *
- * create(config) builds TWO sibling module objects from the exact same
- * internal factory (buildVariant) — `full` (includes a "Panel Settings"
- * tab: theme/position/shortcut/about/export-import) and `lite` (excludes
- * it — that UI is exposed via renderChromeSettings for the dashboard's
- * cog instead). They are structurally identical; the only difference is
- * one boolean flag passed into the shared factory. JLib.render() decides
- * which one actually mounts based on final module count — see
- * services.js's `mountInto()`. Neither variant owns its own modal or
- * theme instance anymore; both receive `services.shell` and
- * `services.theme` from whichever shared shell JLib.render() built,
- * whether that's a 1-module shell or a 2+-module dashboard.
+ * Two sibling variants built from one shared factory (buildVariant),
+ * restored after a brief detour where there was only one:
+ *   - full: used standalone (this module is the only one registered).
+ *     One panel — the userscript's own scopes/categories, PLUS a
+ *     "Panel Settings" tab (a nested nested chrome-settings module — see
+ *     buildChromeModule below — mounted inline instead of full-screen),
+ *     PLUS an "About" tab with two info entries: JLib's own and the
+ *     userscript's own (config.about), since there's no dashboard to
+ *     keep them apart.
+ *   - lite: used for the dashboard menu's "Settings" entry. Userscript
+ *     settings only, no chrome mixed in, PLUS a trailing "About" tab
+ *     with just the userscript's own info entry.
+ *
+ * The dashboard's cog is neither of these — it opens buildChromeModule's
+ * output directly, full-screen, same as any dashboard menu item, but
+ * that module is never registered via JLib.registerModule() and doesn't
+ * count toward module count. See services.js's cog handler. Both `full`'s
+ * Panel Settings tab and the cog mount the *same kind* of chrome module
+ * (same namespace, same features) — one nested inline, one full-screen.
+ *
+ * Doesn't own its own modal or theme instance — receives `services.shell`
+ * and `services.theme` from whichever shared shell JLib.render() built.
  *
  * Depends on: JLib.dom, JLib.storage, JLib.utils, JLib.moduleBase (all
- * services.js), JLib.elements.inputs/tabs/button (elements.js)
+ * services.js), JLib.elements.inputs/tabs/button/search (elements.js)
  */
 var JLib = typeof JLib !== 'undefined' ? JLib : {};
 JLib.modules = JLib.modules || {};
@@ -23,6 +34,29 @@ JLib.modules.settingsPanel = (function () {
   const { el } = JLib.dom;
   const { toggleRow, dropdownRow, numberRow, textRow, actionRow, makeKeyboardActivatable } = JLib.elements.inputs;
   const { button } = JLib.elements.button;
+
+  // JLib's own About copy — used in `full` (alongside the userscript's
+  // own) and in the standalone chrome module the cog opens.
+  const JLIB_ABOUT = {
+    summary: 'JLib — a shared settings dashboard for userscripts. Everything stored locally, nothing phoned home.',
+    details: (container) => {
+      container.appendChild(
+        el('div', {}, [
+          el('p', {}, [
+            'JLib is a small toolkit for building Tampermonkey userscript UIs — settings panels, notifications, and the dashboard shell you\u2019re looking at right now. It\u2019s split into three pieces: ',
+            el('strong', {}, ['core']),
+            ' (the foundational, non-visual plumbing and reusable UI primitives), ',
+            el('strong', {}, ['modules']),
+            ' (full features like this settings panel), and whatever a userscript author registers on top.',
+          ]),
+          el('p', {}, [
+            'All settings and preferences are stored locally via Tampermonkey\u2019s own storage \u2014 nothing here makes network requests or reports usage anywhere. Open source, MIT licensed.',
+          ]),
+          el('p', {}, [el('a', { attrs: { href: 'https://github.com/reddpandda/JLib', target: '_blank', rel: 'noopener' } }, ['github.com/reddpandda/JLib'])]),
+        ])
+      );
+    },
+  };
 
   function resolveDependsOn(feature) {
     if (feature.dependsOn) return feature.dependsOn;
@@ -41,40 +75,34 @@ JLib.modules.settingsPanel = (function () {
     return parts.join('+');
   }
 
-  // ---------- shared factory ----------
-  // variantOpts.includeChromeTab: true for `full`, false for `lite`.
-  // Both variants call this same function — see create() at the bottom.
+  const SEARCH_THRESHOLD = 8; // show the search icon only once a scope has more features than this
+
   function buildVariant(config, variantOpts) {
+    variantOpts = variantOpts || {};
     const namespace = config.namespace;
     const title = config.title || namespace;
     const categories = config.categories || [];
     const allFeatures = config.features || [];
-    const storableFeatures = allFeatures.filter((f) => f.type !== 'action');
+    const storableFeatures = allFeatures.filter((f) => f.type !== 'action' && f.type !== 'info');
     const scopes = config.scopes || null;
     const multiScope = !!(scopes && scopes.length > 1);
     const getCurrentScope = config.getCurrentScope || (() => (scopes && scopes[0] ? scopes[0].id : undefined));
     const extraSections = config.extraSections || [];
     const onFeatureChange = config.onFeatureChange || null;
 
-    const uiConf = config.ui || {};
-    const keyboardShortcutDefault = uiConf.keyboardShortcutDefault || 'Ctrl+Shift+S';
-    const panelPositionDefault = uiConf.panelPositionDefault || 'center';
-
     const featureStore = JLib.storage.createStore(storableFeatures, { storageKeyPrefix: namespace + '_settings', migrate: config.migrate });
-    const uiStore = JLib.storage.createStore(
-      [
-        { id: 'panelPosition', default: panelPositionDefault },
-        { id: 'showAnimations', default: true },
-        { id: 'keyboardShortcut', default: keyboardShortcutDefault },
-      ],
-      { storageKeyPrefix: namespace + '_panelUi' }
-    );
-    let uiSettings = uiStore.load();
     const liveSettingsCache = {};
 
+    // ---------- About entries for this variant ----------
+    // full: JLib's + the userscript's. lite: the userscript's only.
+    // Chrome module (built with its own tiny config, see buildChromeModule)
+    // passes its own `about` and gets just that one entry.
+    const aboutEntries = [];
+    if (variantOpts.includeChromeTab && !config.isChromeModule) aboutEntries.push({ id: 'jlib', heading: 'About JLib', ...JLIB_ABOUT });
+    if (config.about) aboutEntries.push({ id: 'userscript', heading: 'About ' + title, ...config.about });
+    if (config.isChromeModule) aboutEntries.push({ id: 'jlib', heading: 'About JLib', ...JLIB_ABOUT });
+
     // ---------- deep-link index ----------
-    // Flat model (categories are the only grouping level in this data
-    // shape) — idIndex maps featureId -> { feature, categoryId }.
     const idIndex = {};
     allFeatures.forEach((f) => {
       idIndex[f.id] = { feature: f, categoryId: f.category };
@@ -162,20 +190,21 @@ JLib.modules.settingsPanel = (function () {
     }
 
     // ---------- navigation state ----------
-    // Positional (breadcrumb reflects exactly what's in this state, same
-    // shape regardless of how you arrived) PLUS a separate linear history
-    // stack for the Back button, which restores a full prior snapshot
-    // (view + expanded categories + scroll) rather than walking up a tree.
-    let activeView = null; // 'scope:<id>' | 'panelSettings' | 'extra:<id>'
-    let expandedCategories = null; // Set
-    const history = []; // [{ activeView, expandedCategories: [...], scrollTop }]
+    let activeView = null; // 'scope:<id>' | 'panelSettings' | 'extra:<id>' | 'about' | 'info:<id>'
+    let expandedCategories = null;
+    let searchOpen = false;
+    let searchQuery = '';
+    const history = [];
     const MAX_HISTORY = 50;
 
     function categoriesForScope(scopeId) {
-      return categories.filter((cat) => allFeatures.some((f) => f.category === cat.id && featureStore.appliesTo(f, scopeId)));
+      return categories.filter((cat) => allFeatures.some((f) => f.category === cat.id && f.type !== 'info' && featureStore.appliesTo(f, scopeId)));
+    }
+    function featuresForScope(scopeId) {
+      return allFeatures.filter((f) => f.type !== 'info' && featureStore.appliesTo(f, scopeId));
     }
     function snapshotState(scrollTop) {
-      return { activeView, expandedCategories: expandedCategories ? Array.from(expandedCategories) : null, scrollTop: scrollTop || 0 };
+      return { activeView, expandedCategories: expandedCategories ? Array.from(expandedCategories) : null, scrollTop: scrollTop || 0, searchOpen, searchQuery };
     }
     function pushHistory(scrollTop) {
       history.push(snapshotState(scrollTop));
@@ -183,9 +212,6 @@ JLib.modules.settingsPanel = (function () {
     }
 
     // ---------- deep links ----------
-    // buildLink({scope, category, feature}) -> query-string-shaped token
-    // a caller can stash in a URL hash, GM_setValue, wherever. Doesn't
-    // touch the actual browser URL itself — that's the caller's choice.
     function buildLink(opts) {
       opts = opts || {};
       const params = new URLSearchParams();
@@ -203,7 +229,6 @@ JLib.modules.settingsPanel = (function () {
       return out;
     }
 
-    // ---------- render (populated once mount() runs, see below) ----------
     let renderTabs, renderContent, applyChrome, contentEl, sidebarEl;
     let currentPublicApi = null;
 
@@ -212,6 +237,8 @@ JLib.modules.settingsPanel = (function () {
       const scopeId = opts.scope !== undefined ? opts.scope : getCurrentScope();
       activeView = multiScope ? 'scope:' + scopeId : 'scope:__default__';
       expandedCategories = null;
+      searchOpen = false;
+      searchQuery = '';
 
       let targetCategory = opts.category;
       if (!targetCategory && opts.feature && idIndex[opts.feature]) targetCategory = idIndex[opts.feature].categoryId;
@@ -240,6 +267,8 @@ JLib.modules.settingsPanel = (function () {
       if (!prev) return;
       activeView = prev.activeView;
       expandedCategories = prev.expandedCategories ? new Set(prev.expandedCategories) : null;
+      searchOpen = prev.searchOpen;
+      searchQuery = prev.searchQuery;
       rerenderAll();
       requestAnimationFrame(() => {
         if (contentEl) contentEl.scrollTop = prev.scrollTop;
@@ -248,7 +277,7 @@ JLib.modules.settingsPanel = (function () {
 
     // ---------- export / import ----------
     function exportAllSettings() {
-      const data = { namespace, version: config.exportVersion || 1, exportedAt: new Date().toISOString(), ui: uiSettings, scopes: {} };
+      const data = { namespace, version: config.exportVersion || 1, exportedAt: new Date().toISOString(), scopes: {} };
       const scopeIds = scopes ? scopes.map((s) => s.id) : [undefined];
       scopeIds.forEach((sid) => {
         data.scopes[sid === undefined ? '__default__' : sid] = loadScopeSettings(sid);
@@ -274,10 +303,6 @@ JLib.modules.settingsPanel = (function () {
         reader.onload = () => {
           try {
             const data = JSON.parse(String(reader.result));
-            if (data.ui) {
-              uiSettings = Object.assign(uiStore.getDefaults(), data.ui);
-              uiStore.save(undefined, uiSettings);
-            }
             if (data.scopes) {
               for (const key in data.scopes) {
                 const sid = key === '__default__' ? undefined : key;
@@ -296,105 +321,8 @@ JLib.modules.settingsPanel = (function () {
       input.click();
     }
 
-    // ---------- chrome settings (theme/position/shortcut/about) ----------
-    // Only ever invoked in two places: inline as a tab (full variant) or
-    // from the dashboard cog (lite variant, via renderChromeSettings on
-    // the module wrapper) — identical function either way.
-    function renderChromeSettings(container, services, rerender) {
-      while (container.firstChild) container.removeChild(container.firstChild);
-      const theme = services.theme;
-      const shell = services.shell;
-
-      const themeOptions = [{ value: 'followWebsite', label: 'Follow Website' }, { value: 'system', label: 'System' }].concat(
-        Object.keys(theme.themes).map((name) => ({ value: name, label: name.charAt(0).toUpperCase() + name.slice(1) }))
-      );
-      const positionOptions = [
-        { value: 'center', label: 'Center' },
-        { value: 'topLeft', label: 'Top Left' },
-        { value: 'topRight', label: 'Top Right' },
-        { value: 'bottomLeft', label: 'Bottom Left' },
-        { value: 'bottomRight', label: 'Bottom Right' },
-      ];
-      function saveUi() {
-        uiStore.save(undefined, uiSettings);
-      }
-
-      const themeRow = dropdownRow('Theme', 'Follow Website samples the page and WCAG-corrects the result', themeOptions, theme.getMode(), (v) => {
-        theme.setMode(v, shell.panelEl);
-        rerender();
-      });
-      const refreshBtn = button('\u21bb Re-sample site colors', () => theme.forceReExtract(shell.panelEl));
-      const animRow = toggleRow('Show Animations', 'Panel transitions and theme crossfade', uiSettings.showAnimations, (v) => {
-        uiSettings.showAnimations = v;
-        saveUi();
-        if (theme.setAnimationsEnabled) theme.setAnimationsEnabled(v);
-        rerender();
-      });
-      const posRow = dropdownRow('Position', 'Where the panel appears on screen', positionOptions, uiSettings.panelPosition, (v) => {
-        uiSettings.panelPosition = v;
-        saveUi();
-        shell.setPosition(v);
-        rerender();
-      });
-
-      const shortcutDisplay = el('div', { className: 'jlib-shortcut-input', attrs: { tabindex: '0', role: 'button' } }, [uiSettings.keyboardShortcut || '(none)']);
-      shortcutDisplay.addEventListener('click', () => {
-        shortcutDisplay.textContent = 'Press keys...';
-        const onKey = (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          if (['Control', 'Alt', 'Shift', 'Meta'].indexOf(e.key) !== -1) return;
-          if (e.key === 'Escape') {
-            shortcutDisplay.textContent = uiSettings.keyboardShortcut || '(none)';
-            document.removeEventListener('keydown', onKey, true);
-            return;
-          }
-          const combo = formatShortcutFromEvent(e);
-          uiSettings.keyboardShortcut = combo;
-          saveUi();
-          shell.setKeyboardShortcut(combo);
-          shortcutDisplay.textContent = combo;
-          document.removeEventListener('keydown', onKey, true);
-        };
-        document.addEventListener('keydown', onKey, true);
-      });
-      makeKeyboardActivatable(shortcutDisplay);
-
-      const exportBtn = button('\u2b07 Export All Settings', exportAllSettings);
-      const importBtn = button('\u2b06 Import Settings', () => importAllSettings(rerender));
-      const resetBtn = button('\u21ba Reset Panel Settings to Default', () => {
-        if (!confirm('Reset panel settings to default?')) return;
-        uiSettings = uiStore.getDefaults();
-        saveUi();
-        shell.setPosition(uiSettings.panelPosition);
-        shell.setKeyboardShortcut(uiSettings.keyboardShortcut);
-        rerender();
-      });
-
-      const aboutBlock = config.about ? el('div', { className: 'jlib-about' }, []) : null;
-      if (aboutBlock && config.about) config.about(aboutBlock);
-
-      container.appendChild(
-        el(
-          'div',
-          {},
-          [
-            el('div', { className: 'jlib-category' }, [el('div', { className: 'jlib-cat-header' }, [el('span', {}, ['\ud83c\udfa8 Appearance'])]), el('div', { className: 'jlib-cat-body' }, [themeRow, refreshBtn, animRow])]),
-            el('div', { className: 'jlib-category' }, [el('div', { className: 'jlib-cat-header' }, [el('span', {}, ['\ud83e\udded Behavior'])]), el('div', { className: 'jlib-cat-body' }, [posRow])]),
-            el('div', { className: 'jlib-category' }, [
-              el('div', { className: 'jlib-cat-header' }, [el('span', {}, ['\u2328\ufe0f Shortcut'])]),
-              el('div', { className: 'jlib-cat-body' }, [el('div', { className: 'jlib-row' }, [el('div', { className: 'jlib-row-info' }, [el('div', { className: 'jlib-row-label' }, ['Keyboard Shortcut'])]), shortcutDisplay])]),
-            ]),
-            el('div', { className: 'jlib-category' }, [el('div', { className: 'jlib-cat-header' }, [el('span', {}, ['\ud83d\udcbe Backup'])]), el('div', { className: 'jlib-cat-body' }, [el('div', { className: 'jlib-about-buttons' }, [exportBtn, importBtn])])]),
-          ].concat(aboutBlock ? [el('div', { className: 'jlib-category' }, [el('div', { className: 'jlib-cat-header' }, [el('span', {}, ['\u2139\ufe0f About'])]), el('div', { className: 'jlib-cat-body' }, [aboutBlock])])] : [])
-            .concat([resetBtn])
-        )
-      );
-    }
-
-    // ---------- mount (uniform — no dashboardMode branching left) ----------
+    // ---------- mount ----------
     function mount(container, services) {
-      const view = JLib.moduleBase.makeView(container);
       const bodyWrap = el('div', { className: 'jlib-body' });
       const sidebar = el('div', { className: 'jlib-sidebar' });
       const content = el('div', { className: 'jlib-content' });
@@ -406,24 +334,32 @@ JLib.modules.settingsPanel = (function () {
 
       if (!activeView) activeView = multiScope ? 'scope:' + getCurrentScope() : 'scope:__default__';
 
+      function selectView(id) {
+        pushHistory(content.scrollTop);
+        activeView = id;
+        expandedCategories = null;
+        searchOpen = false;
+        searchQuery = '';
+        renderTabs();
+        renderContent();
+      }
+
       renderTabs = function () {
         const items = [];
         if (multiScope) {
           scopes.forEach((s) => {
             const badge = s.id === getCurrentScope() ? el('span', { className: 'jlib-current-badge' }, ['\u25cf']) : null;
-            items.push({ id: 'scope:' + s.id, label: s.label, badge, groupLabel: uiConf.scopesLabel || 'Scopes' });
+            items.push({ id: 'scope:' + s.id, label: s.label, badge, groupLabel: uiConf().scopesLabel || 'Scopes' });
           });
         }
         if (variantOpts.includeChromeTab) items.push({ id: 'panelSettings', label: 'Panel Settings', groupLabel: 'Settings' });
         extraSections.forEach((sec) => items.push({ id: 'extra:' + sec.id, label: sec.label, groupLabel: 'Settings' }));
-        JLib.elements.tabs.render(sidebar, items, activeView, (id) => {
-          pushHistory(content.scrollTop);
-          activeView = id;
-          expandedCategories = null;
-          renderTabs();
-          renderContent();
-        });
+        if (aboutEntries.length) items.push({ id: 'about', label: 'About', groupLabel: 'Settings' });
+        JLib.elements.tabs.render(sidebar, items, activeView, selectView);
       };
+      function uiConf() {
+        return config.ui || {};
+      }
 
       function renderBreadcrumb() {
         const crumbs = [];
@@ -432,6 +368,11 @@ JLib.modules.settingsPanel = (function () {
           crumbs.push(multiScope ? scopeLabel(scopeId === '__default__' ? undefined : scopeId) : title);
         } else if (activeView === 'panelSettings') {
           crumbs.push('Panel Settings');
+        } else if (activeView === 'about') {
+          crumbs.push('About');
+        } else if (activeView.indexOf('info:') === 0) {
+          const entry = aboutEntries.find((e) => 'info:' + e.id === activeView);
+          crumbs.push('About', entry ? entry.heading : '');
         } else if (activeView.indexOf('extra:') === 0) {
           const sec = extraSections.find((s) => 'extra:' + s.id === activeView);
           crumbs.push(sec ? sec.label : '');
@@ -443,12 +384,76 @@ JLib.modules.settingsPanel = (function () {
         return el('div', { className: 'jlib-breadcrumb' }, [backBtn, el('span', {}, [crumbs.join(' \u203a ')])]);
       }
 
+      function renderInfoEntry(entry) {
+        const children = [el('div', { className: 'jlib-content-header' }, [el('h2', {}, [entry.heading])]), el('p', { className: 'jlib-info-summary' }, [entry.summary])];
+        if (entry.details) {
+          children.push(
+            button('More Info \u2192', () => {
+              pushHistory(content.scrollTop);
+              activeView = 'info:' + entry.id;
+              renderTabs();
+              renderContent();
+            })
+          );
+        }
+        return el('div', { className: 'jlib-info-block' }, children);
+      }
+
+      function renderAboutView() {
+        return el('div', {}, [el('div', { className: 'jlib-content-header' }, [el('h2', {}, ['About'])])].concat(aboutEntries.map(renderInfoEntry)));
+      }
+      function renderInfoDetailView() {
+        const entry = aboutEntries.find((e) => 'info:' + e.id === activeView);
+        const wrap = el('div', {}, [el('div', { className: 'jlib-content-header' }, [el('h2', {}, [entry ? entry.heading : 'Not found'])])]);
+        if (entry && entry.details) entry.details(wrap);
+        return wrap;
+      }
+
+      function renderSearchResults(scopeId, query) {
+        const candidates = featuresForScope(scopeId);
+        const matched = JLib.elements.search.search(candidates, query, (f) => [f.label, f.description, (f.keywords || []).join(' ')].join(' '));
+        const settingsObj = isLiveScope(scopeId) ? getLiveSettings() : loadScopeSettings(scopeId);
+        const rows = matched.map((f) => buildFeatureRow(f, scopeId, settingsObj, renderContent));
+        return el('div', {}, [
+          el('div', { className: 'jlib-content-header' }, [el('h2', {}, ['Search results'])]),
+          rows.length ? el('div', {}, rows) : el('div', { className: 'jlib-row-desc' }, ['No matching settings.']),
+        ]);
+      }
+
       function renderScopeView(scopeId) {
+        const totalFeatures = featuresForScope(scopeId).length;
+        const showSearchIcon = totalFeatures > SEARCH_THRESHOLD;
+
         if (expandedCategories === null) expandedCategories = new Set(categoriesForScope(scopeId).map((c) => c.id));
         const settingsObj = isLiveScope(scopeId) ? getLiveSettings() : loadScopeSettings(scopeId);
         const headerChildren = [el('h2', {}, [(scopes ? scopeLabel(scopeId) : title) + ' Settings'])];
         if (scopes) headerChildren.push(el('span', { className: 'jlib-scope-badge' }, [scopeLabel(scopeId)]));
+
+        if (showSearchIcon) {
+          const searchToggle = button('\ud83d\udd0d', () => {
+            searchOpen = !searchOpen;
+            if (!searchOpen) searchQuery = '';
+            renderContent();
+          }, { className: 'jlib-search-toggle' + (searchOpen ? ' active' : '') });
+          headerChildren.push(searchToggle);
+        }
         const children = [el('div', { className: 'jlib-content-header' }, headerChildren)];
+
+        if (showSearchIcon && searchOpen) {
+          const searchInput = JLib.elements.search.inputField({
+            placeholder: 'Search settings\u2026',
+            onQuery: (q) => {
+              searchQuery = q;
+              renderContent();
+            },
+          });
+          searchInput.value = searchQuery;
+          children.push(searchInput);
+          if (searchQuery.trim()) {
+            children.push(renderSearchResults(scopeId, searchQuery));
+            return el('div', {}, children);
+          }
+        }
 
         if (scopes && !isLiveScope(scopeId)) {
           children.push(el('div', { className: 'jlib-remote-note' }, [`You're viewing ${scopeLabel(scopeId)}'s settings from elsewhere. Changes save now and take effect next time it's active.`]));
@@ -467,7 +472,7 @@ JLib.modules.settingsPanel = (function () {
           });
           makeKeyboardActivatable(header);
           const rows = expanded
-            ? allFeatures.filter((f) => f.category === cat.id && featureStore.appliesTo(f, scopeId)).map((f) => buildFeatureRow(f, scopeId, settingsObj, renderContent))
+            ? allFeatures.filter((f) => f.category === cat.id && f.type !== 'info' && featureStore.appliesTo(f, scopeId)).map((f) => buildFeatureRow(f, scopeId, settingsObj, renderContent))
             : [];
           children.push(el('div', { className: 'jlib-category' }, [header, el('div', { className: 'jlib-cat-body' }, rows)]));
         });
@@ -490,11 +495,13 @@ JLib.modules.settingsPanel = (function () {
 
         let view;
         if (activeView === 'panelSettings') {
-          view = el('div', {}, [el('div', { className: 'jlib-content-header' }, [el('h2', {}, ['Panel Settings'])])]);
-          renderChromeSettings(view, services, () => {
-            applyChrome();
-            renderContent();
-          });
+          view = el('div', { className: 'jlib-nested-chrome' }, []);
+          const chromeModule = getSharedChromeModule(services);
+          chromeModule.mount(view, services);
+        } else if (activeView === 'about') {
+          view = renderAboutView();
+        } else if (activeView.indexOf('info:') === 0) {
+          view = renderInfoDetailView();
         } else if (activeView.indexOf('extra:') === 0) {
           const sec = extraSections.find((s) => 'extra:' + s.id === activeView);
           view = sec ? sec.render({ panel: publicApi }) : el('div', {}, ['Not found']);
@@ -506,9 +513,7 @@ JLib.modules.settingsPanel = (function () {
         content.scrollTop = scrollTop;
       };
 
-      applyChrome = function () {
-        if (services.shell) services.shell.setPosition(uiSettings.panelPosition);
-      };
+      applyChrome = function () {};
 
       const publicApi = {
         getSettings: (scopeId) => (scopeId === undefined || isLiveScope(scopeId) ? getLiveSettings() : loadScopeSettings(scopeId)),
@@ -527,6 +532,7 @@ JLib.modules.settingsPanel = (function () {
         navigateTo: (opts) => navigateTo(opts, () => {
           renderTabs();
         }),
+        showPanelSettings: () => selectView('panelSettings'),
       };
       currentPublicApi = publicApi;
 
@@ -535,47 +541,177 @@ JLib.modules.settingsPanel = (function () {
       renderContent();
     }
 
-    function unmount() {
-      // Nothing owned to tear down anymore — no modal, no theme instance,
-      // no watchers. The shared shell (services.js render()) owns all of
-      // that lifecycle now.
-    }
+    function unmount() {}
 
     return {
-      variantOpts,
+      id: config.moduleId || 'settings',
+      label: config.title || config.namespace,
+      order: 0,
       mount,
       unmount,
-      renderChromeSettings,
-      getShellConfig: () => ({ title, position: uiSettings.panelPosition, keyboardShortcut: uiSettings.keyboardShortcut }),
+      exportAllSettings,
+      importAllSettings,
       get api() {
         return currentPublicApi;
       },
     };
   }
 
-  // ---------- public factory: builds the two true siblings ----------
+  // ---------- shared chrome module ----------
+  // The "Panel Settings" experience — theme/position/animations/shortcut/
+  // export-import — expressed as real schema features (enum/boolean/
+  // custom/action), not bespoke hand-built rows. One factory, two mount
+  // points: nested inline (full's Panel Settings tab, via
+  // getSharedChromeModule below) and full-screen (the dashboard cog, via
+  // services.js). Same namespace either way, so storage is consistent
+  // regardless of which one a person actually opened.
+  function buildChromeConfig(services) {
+    const theme = services.theme;
+    const shell = services.shell;
+    const themeOptions = [{ value: 'followWebsite', label: 'Follow Website' }, { value: 'system', label: 'System' }].concat(
+      Object.keys(theme.themes).map((name) => ({ value: name, label: name.charAt(0).toUpperCase() + name.slice(1) }))
+    );
+    const positionOptions = [
+      { value: 'center', label: 'Center' },
+      { value: 'topLeft', label: 'Top Left' },
+      { value: 'topRight', label: 'Top Right' },
+      { value: 'bottomLeft', label: 'Bottom Left' },
+      { value: 'bottomRight', label: 'Bottom Right' },
+    ];
+    return {
+      categories: [
+        { id: 'appearance', label: 'Appearance', icon: '\ud83c\udfa8' },
+        { id: 'behavior', label: 'Behavior', icon: '\ud83e\udded' },
+        { id: 'shortcut', label: 'Shortcut', icon: '\u2328\ufe0f' },
+        { id: 'backup', label: 'Backup', icon: '\ud83d\udcbe' },
+      ],
+      features: [
+        {
+          id: 'theme', type: 'enum', category: 'appearance', label: 'Theme',
+          description: 'Follow Website samples the page and WCAG-corrects the result.',
+          options: themeOptions, default: 'followWebsite',
+          onChange: (v) => theme.setMode(v, shell.panelEl),
+        },
+        {
+          id: 'refreshTheme', type: 'action', category: 'appearance', label: 'Re-sample site colors',
+          description: 'Force a fresh palette extraction from the current page.', buttonLabel: '\u21bb Refresh',
+          onClick: () => theme.forceReExtract(shell.panelEl),
+        },
+        {
+          id: 'showAnimations', type: 'boolean', category: 'appearance', label: 'Show Animations',
+          description: 'Panel transitions and theme crossfade.', default: true,
+          onChange: (v) => { if (theme.setAnimationsEnabled) theme.setAnimationsEnabled(v); },
+        },
+        {
+          id: 'panelPosition', type: 'enum', category: 'behavior', label: 'Position',
+          description: 'Where the panel appears on screen.', options: positionOptions, default: 'center',
+          onChange: (v) => shell.setPosition(v),
+        },
+        {
+          id: 'keyboardShortcut', type: 'custom', category: 'shortcut', label: 'Keyboard Shortcut',
+          description: 'Click, then press a key combination.', default: 'Ctrl+Shift+D',
+          render: (value, onChange) => {
+            const display = el('div', { className: 'jlib-shortcut-input', attrs: { tabindex: '0', role: 'button' } }, [value || '(none)']);
+            display.addEventListener('click', () => {
+              display.textContent = 'Press keys\u2026';
+              const onKey = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                if (['Control', 'Alt', 'Shift', 'Meta'].indexOf(e.key) !== -1) return;
+                if (e.key === 'Escape') {
+                  display.textContent = value || '(none)';
+                  document.removeEventListener('keydown', onKey, true);
+                  return;
+                }
+                const combo = formatShortcutFromEvent(e);
+                display.textContent = combo;
+                document.removeEventListener('keydown', onKey, true);
+                onChange(combo);
+              };
+              document.addEventListener('keydown', onKey, true);
+            });
+            makeKeyboardActivatable(display);
+            return display;
+          },
+          onChange: (v) => shell.setKeyboardShortcut(v),
+        },
+        {
+          id: 'exportSettings', type: 'action', category: 'backup', label: 'Export All Settings',
+          buttonLabel: '\u2b07 Export', onClick: () => {},
+        },
+        {
+          id: 'importSettings', type: 'action', category: 'backup', label: 'Import Settings',
+          buttonLabel: '\u2b06 Import', onClick: () => {},
+        },
+      ],
+    };
+  }
+
+  // Reads just position/shortcut from the chrome module's storage without
+  // building or mounting the module itself — the shell needs these to
+  // configure its very first paint, which happens before anyone has
+  // necessarily opened Panel Settings this session (the chrome module
+  // mounts lazily, on first open). Same storageKeyPrefix as the real
+  // chrome module's featureStore (namespace + '_settings'), so this is
+  // reading the exact same persisted data, not a separate copy.
+  function getChromeShellDefaults() {
+    const store = JLib.storage.createStore(
+      [
+        { id: 'theme', default: 'followWebsite' },
+        { id: 'showAnimations', default: true },
+        { id: 'panelPosition', default: 'center' },
+        { id: 'keyboardShortcut', default: 'Ctrl+Shift+D' },
+      ],
+      { storageKeyPrefix: 'jlib_shell_chrome_settings' }
+    );
+    const loaded = store.load();
+    return { themeMode: loaded.theme, showAnimations: loaded.showAnimations, position: loaded.panelPosition, keyboardShortcut: loaded.keyboardShortcut };
+  }
+
+  let cachedChromeModule = null;
+  function getSharedChromeModule(services) {
+    if (cachedChromeModule) return cachedChromeModule;
+    cachedChromeModule = buildChromeModule(services);
+    return cachedChromeModule;
+  }
+  function buildChromeModule(services) {
+    const cfg = buildChromeConfig(services);
+    const mod = buildVariant(
+      {
+        namespace: 'jlib_shell_chrome',
+        title: 'Panel Settings',
+        moduleId: '__chromeSettings__',
+        categories: cfg.categories,
+        features: cfg.features,
+        isChromeModule: true,
+      },
+      { includeChromeTab: false }
+    );
+    // Wire the two action features to this exact instance's export/import
+    // now that `mod` exists (buildChromeConfig runs before buildVariant
+    // does, so it can't close over `mod` directly).
+    cfg.features.forEach((f) => {
+      if (f.id === 'exportSettings') f.onClick = () => mod.exportAllSettings();
+      if (f.id === 'importSettings') f.onClick = () => mod.importAllSettings();
+    });
+    return mod;
+  }
+
+  // ---------- public factory ----------
   function create(config) {
     if (!config || !config.namespace) throw new Error('JLib.modules.settingsPanel.create requires config.namespace');
-
     const full = buildVariant(config, { includeChromeTab: true });
     const lite = buildVariant(config, { includeChromeTab: false });
-
     return {
       id: 'settings',
       label: config.title || config.namespace,
       order: 0,
+      full,
+      lite,
+      // Default shape (used if something mounts this wrapper directly
+      // instead of picking .full/.lite explicitly).
       mount: lite.mount,
       unmount: lite.unmount,
-      standaloneVariant: full,
-      dashboardVariant: lite,
-      // Cog calls this with (container, services) only — wrap with a
-      // self-referencing rerender since renderChromeSettings itself
-      // expects (container, services, rerender).
-      renderChromeSettings: (container, services) => {
-        const rerender = () => full.renderChromeSettings(container, services, rerender);
-        rerender();
-      },
-      getShellConfig: full.getShellConfig,
       get api() {
         return full.api || lite.api;
       },
@@ -598,7 +734,11 @@ JLib.modules.settingsPanel = (function () {
     .jlib-cat-body { padding:2px 4px 8px 22px; }
     .jlib-current-badge { font-size:9px; color: var(--jsp-accent); }
     .jlib-shortcut-input { background: var(--jsp-hover); border:1px solid var(--jsp-border); border-radius:6px; padding:6px 12px; font-size:12px; cursor:pointer; min-width:120px; text-align:center; }
-    .jlib-about-buttons { display:flex; gap:10px; }
+    .jlib-search-toggle { border-radius:50%; width:28px; height:28px; padding:0; margin-left:auto; }
+    .jlib-search-toggle.active { color: var(--jsp-accent); background: var(--jsp-accent-bg); }
+    .jlib-info-block { margin-bottom:18px; }
+    .jlib-info-summary { font-size:13px; color: var(--jsp-muted); line-height:1.5; margin: 0 0 10px; }
+    .jlib-nested-chrome { margin: -20px -26px -24px; height: calc(100% + 44px); }
     .jlib-hl-flash { animation: jlib-flash 1.6s ease; }
     @keyframes jlib-flash { 0%, 100% { background: transparent; } 15%, 40% { background: var(--jsp-accent-bg); } }
   `;
@@ -612,5 +752,5 @@ JLib.modules.settingsPanel = (function () {
   }
   injectStylesOnce();
 
-  return { create };
+  return { create, buildChromeModule, getSharedChromeModule, getChromeShellDefaults, JLIB_ABOUT };
 })();
