@@ -11,13 +11,13 @@ core/       services.js, elements.js — foundational, non-visual pieces
             reusable visual primitives (buttons, rows, modal, tabs, search)
 modules/    settings-panel.js, notification-center.js — full features,
             each one file
-examples/   working userscripts showing both usage shapes
+Examples/   working userscripts showing both usage shapes
 ```
 
 ## Install
 
 `@require` in order — `core/` first, then whichever `modules/` you want,
-pinned to a tag once one exists (see [example-dashboard-userscript.user.js](examples/example-dashboard-userscript.user.js)
+pinned to a tag once one exists (see [Example dashboard userscript.user.js](Examples/Example%20dashboard%20userscript.user.js)
 for the full block).
 
 ```
@@ -37,14 +37,24 @@ Call `JLib.scheduleRender()` once, at the end of your script — it defers
 to a microtask so it runs after every `@require` and your own code has
 executed, meaning module count is exact by the time it fires:
 
-- **1 module registered** → a single shell, no tabs, no cog. If it's
-  Settings Panel, its `full` variant mounts, with Panel Settings rendered
-  as its own inline tab.
-- **2+ modules registered** → a dashboard shell: tab strip to switch
-  modules, cog next to the close button for whichever module exposes
-  `renderChromeSettings` (Settings Panel's `lite` variant, normally).
+- **1 module registered** → a single shell, no menu, no cog. If it's
+  Settings Panel, its `full` variant mounts — Panel Settings and About
+  both live inline as tabs alongside the userscript's own settings.
+- **2+ modules registered** → a menu-style dashboard shell: pick a module
+  to open it full-screen with a "Back to Dashboard" control. Settings
+  Panel, if registered, opens its `lite` variant here — userscript
+  settings only. Cog next to the close button opens a *different*,
+  unregistered settings module (theme/position/shortcut/backup/about)
+  that never counts toward module count — two separate surfaces, reached
+  two different ways.
 
-See both shapes end to end in [examples/](examples/).
+Settings Panel features support an optional `keywords: [...]` array
+(folded into search matching alongside label/description) and an
+`'info'` feature type (a summary line plus an optional "More Info"
+drill-in) — used internally for every About entry, but available to any
+feature in any category.
+
+See both shapes end to end in [Examples/](Examples/).
 
 ## License
 
