@@ -105,7 +105,7 @@ JLib.elements.modal = (function () {
     if (!config.id) throw new Error('JLib.elements.modal.create requires config.id');
 
     let built = false;
-    let panel, overlay, bodyEl, shortcutListener;
+    let panel, overlay, bodyEl, shortcutListener, rightGroup;
 
     function build() {
       if (built) return;
@@ -115,7 +115,8 @@ JLib.elements.modal = (function () {
       document.body.appendChild(overlay);
 
       const closeBtn = el('button', { className: 'jlib-modal-close' }, ['\u00d7']);
-      const header = el('div', { className: 'jlib-modal-header' }, [el('h2', {}, [config.title || '']), closeBtn]);
+      rightGroup = el('div', { className: 'jlib-modal-header-actions' }, [closeBtn]);
+      const header = el('div', { className: 'jlib-modal-header' }, [el('h2', {}, [config.title || '']), rightGroup]);
       bodyEl = el('div', { className: 'jlib-modal-body' });
       const footer = config.footerText ? el('div', { className: 'jlib-modal-footer' }, [config.footerText]) : null;
 
@@ -160,10 +161,34 @@ JLib.elements.modal = (function () {
       }
     }
 
+    let prevBodyOverflow = null;
+    function lockBodyScroll() {
+      if (prevBodyOverflow !== null) return; // already locked
+      prevBodyOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+    }
+    function unlockBodyScroll() {
+      if (prevBodyOverflow === null) return;
+      document.body.style.overflow = prevBodyOverflow;
+      prevBodyOverflow = null;
+    }
+    // Belt-and-suspenders for sites whose own scroll containers keep
+    // scrolling under body{overflow:hidden} (scroll-chaining on a nested
+    // scroll region isn't stopped by locking the body alone) — block
+    // wheel/touch events that land on the overlay itself. Events that
+    // land on the panel's own scroll regions (bodyEl, sidebar, etc.)
+    // aren't touched, since those need to keep scrolling normally.
+    function blockOverlayScroll(e) {
+      e.preventDefault();
+    }
+
     function open() {
       build();
       panel.classList.add('active');
       overlay.classList.add('active');
+      lockBodyScroll();
+      overlay.addEventListener('wheel', blockOverlayScroll, { passive: false });
+      overlay.addEventListener('touchmove', blockOverlayScroll, { passive: false });
       const focusable = getFocusableElements(panel);
       if (focusable.length) focusable[0].focus();
       if (config.onOpen) config.onOpen();
@@ -171,6 +196,11 @@ JLib.elements.modal = (function () {
     function close() {
       if (panel) panel.classList.remove('active');
       if (overlay) overlay.classList.remove('active');
+      unlockBodyScroll();
+      if (overlay) {
+        overlay.removeEventListener('wheel', blockOverlayScroll);
+        overlay.removeEventListener('touchmove', blockOverlayScroll);
+      }
       if (config.onClose) config.onClose();
     }
     function toggle() {
@@ -179,6 +209,7 @@ JLib.elements.modal = (function () {
     }
     function destroy() {
       if (shortcutListener) document.removeEventListener('keydown', shortcutListener);
+      unlockBodyScroll();
       if (panel) panel.remove();
       if (overlay) overlay.remove();
       built = false;
@@ -220,6 +251,9 @@ JLib.elements.modal = (function () {
       get bodyEl() {
         return bodyEl;
       },
+      get headerActionsEl() {
+        return rightGroup;
+      },
       formatShortcutFromEvent,
     };
   }
@@ -229,8 +263,9 @@ JLib.elements.modal = (function () {
     .jlib-modal-overlay.active { display:block; }
     .jlib-modal-panel {
       position: fixed; color: var(--jsp-text); background: var(--jsp-bg); border-radius:16px; z-index:999999;
-      width:700px; max-width:94vw; max-height:82vh; box-shadow: var(--jsp-shadow); display:none; overflow:hidden; flex-direction:column;
+      width:700px; height:640px; max-width:94vw; max-height:82vh; box-shadow: var(--jsp-shadow); display:none; overflow:hidden; flex-direction:column;
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      box-sizing: border-box;
     }
     .jlib-modal-panel.active { display:flex; }
     .jlib-modal-panel[data-position="center"] { top:50%; left:50%; transform: translate(-50%,-50%); }
@@ -240,9 +275,56 @@ JLib.elements.modal = (function () {
     .jlib-modal-panel[data-position="bottomRight"] { bottom:24px; right:24px; }
     .jlib-modal-header { padding:18px 24px; border-bottom:1px solid var(--jsp-border); display:flex; justify-content:space-between; align-items:center; flex-shrink:0; }
     .jlib-modal-header h2 { margin:0; color: var(--jsp-accent); font-size:18px; font-weight:600; }
+    .jlib-modal-header-actions { display:flex; align-items:center; gap:6px; flex-shrink:0; }
     .jlib-modal-close { background: var(--jsp-hover); border:none; border-radius:50%; color: var(--jsp-muted); width:30px; height:30px; font-size:17px; cursor:pointer; }
     .jlib-modal-body { flex:1; min-height:0; overflow-y:auto; padding:20px 26px 24px; }
     .jlib-modal-footer { padding:10px 24px; border-top:1px solid var(--jsp-border); font-size:11px; color: var(--jsp-muted); flex-shrink:0; }
+
+    /* Cross-browser scrollbars for every scroll region we create — Firefox
+       reads scrollbar-width/scrollbar-color, everything else (Chrome,
+       Edge, Safari) reads the ::-webkit-scrollbar-* pseudo-elements.
+       Applied broadly via attribute-free class targeting so any current
+       or future scroll container inside our chrome picks it up by just
+       using overflow-y:auto — no per-element opt-in needed. */
+    .jlib-modal-panel, .jlib-modal-panel * {
+      scrollbar-width: thin;
+      scrollbar-color: var(--jsp-accent) transparent;
+    }
+    .jlib-modal-panel *::-webkit-scrollbar { width: 8px; height: 8px; }
+    .jlib-modal-panel *::-webkit-scrollbar-track { background: transparent; }
+    .jlib-modal-panel *::-webkit-scrollbar-thumb { background: var(--jsp-accent); border-radius: 8px; }
+    .jlib-modal-panel *::-webkit-scrollbar-thumb:hover { background: var(--jsp-accent-hover); }
+
+    /* Defensive resets — host pages (Twitch among them) sometimes ship
+       global rules targeting bare tag selectors (button, input, select)
+       that are equal or higher specificity than a same-page stylesheet
+       loaded later, which can silently reposition or restyle our controls
+       even though the clickable hit-area stays correct (only the paint
+       is affected). Resetting to unset and re-establishing only what we
+       need means our own class rules below (.jlib-btn, .jlib-toggle, etc,
+       already higher specificity than a bare tag selector regardless of
+       load order) are what actually paints these elements, not whatever
+       the host page declared for <button>/<input>/<select> globally. */
+    .jlib-modal-panel button,
+    .jlib-modal-panel input,
+    .jlib-modal-panel select {
+      all: unset;
+      box-sizing: border-box;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .jlib-modal-panel select {
+      appearance: menulist;
+    }
+    .jlib-modal-panel input[type="text"],
+    .jlib-modal-panel input[type="number"] {
+      cursor: text;
+    }
+    .jlib-modal-panel *,
+    .jlib-modal-panel *::before,
+    .jlib-modal-panel *::after {
+      box-sizing: border-box;
+    }
   `;
 
   let stylesInjected = false;
