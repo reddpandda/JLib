@@ -926,32 +926,28 @@ JLib.notifications = (function () {
     return core.subscribe((event, record) => {
       if (record.presenter !== 'modal') return;
       if (event !== 'show') return;
-      const overlay = el('div', {
-        attrs: { style: 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:999998;display:flex;align-items:center;justify-content:center;' },
-      });
-      const okBtn = el('button', { attrs: { style: 'margin-top:12px;padding:6px 16px;border-radius:6px;border:none;cursor:pointer;' } }, ['OK']);
-      const dontShowBtn = record.allowDoNotShowAgain
-        ? el('button', { attrs: { style: 'margin-top:12px;margin-left:8px;padding:6px 16px;border-radius:6px;border:none;cursor:pointer;background:transparent;color:inherit;' } }, [
-            "Don't show again",
-          ])
-        : null;
-      const box = el(
-        'div',
-        { attrs: { style: 'background:#14141c;color:#e8e8e8;padding:20px 24px;border-radius:12px;max-width:360px;font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;' } },
-        [el('div', {}, [record.message]), okBtn].concat(dontShowBtn ? [dontShowBtn] : [])
-      );
-      overlay.appendChild(box);
-      document.body.appendChild(overlay);
-      okBtn.addEventListener('click', () => {
+
+      const okBtn = JLib.elements.button.button('OK', () => {
         core.dismiss(record.id);
-        overlay.remove();
+        modalInstance.destroy();
       });
-      if (dontShowBtn) {
-        dontShowBtn.addEventListener('click', () => {
-          core.dismiss(record.id, { doNotShowAgain: true });
-          overlay.remove();
-        });
-      }
+      const dontShowBtn = record.allowDoNotShowAgain
+        ? JLib.elements.button.button("Don't show again", () => {
+            core.dismiss(record.id, { doNotShowAgain: true });
+            modalInstance.destroy();
+          }, { variant: 'ghost' })
+        : null;
+
+      const modalInstance = JLib.elements.modal.create({
+        id: 'jlib-notify-' + record.id,
+        title: record.level.charAt(0).toUpperCase() + record.level.slice(1),
+        content: (bodyEl) => {
+          bodyEl.appendChild(el('div', {}, [record.message]));
+          bodyEl.appendChild(el('div', { attrs: { style: 'display:flex;gap:8px;margin-top:14px;' } }, dontShowBtn ? [okBtn, dontShowBtn] : [okBtn]));
+        },
+        onClose: () => core.dismiss(record.id),
+      });
+      modalInstance.open();
     });
   }
 
@@ -1071,16 +1067,28 @@ JLib.moduleBase = (function () {
  * services.js reaches into elements.js, since the shell IS a modal).
  *
  * Unified shell: there is always exactly ONE modal built, whether 1 or 2+
- * modules are registered. What changes with count is only whether a tab
- * strip + cog get built around it:
- *   - count === 1 (and no forceDashboard): no tabs, no cog. The single
- *     module's `standaloneVariant` (if it has one) mounts directly into
- *     the shell body; otherwise the module itself mounts. The module can
- *     configure the shell (title/position/keyboard shortcut) via an
- *     optional getShellConfig() on whichever variant is mounted.
- *   - count >= 2: tab strip switches between modules' `dashboardVariant`
- *     (if present) or the module itself; cog (next to the close button)
- *     calls whichever registered module exposes renderChromeSettings.
+ * modules are registered. What changes with count is what's inside it:
+ *   - count === 1 (and no forceDashboard): no menu, no cog. If the single
+ *     registered module is Settings Panel, its `full` variant mounts —
+ *     Panel Settings and About live inline as tabs alongside the
+ *     userscript's own settings, since there's no dashboard to keep them
+ *     apart. Any other kind of solo module (no .full/.lite pair) just
+ *     mounts itself directly.
+ *   - count >= 2: a menu screen lists every module (click one to open it
+ *     full-screen with a "Back to Dashboard" control). Settings Panel, if
+ *     registered, opens via its `lite` variant here — userscript settings
+ *     only, no chrome mixed in. Cog (next to the close button) opens a
+ *     *different*, unregistered module entirely — the shared chrome
+ *     module (theme/position/shortcut/backup/about), built via
+ *     JLib.modules.settingsPanel.getSharedChromeModule() under a sentinel
+ *     id that never appears in `modules` and never counts toward module
+ *     count. Two separate settings surfaces, reached two different ways.
+ *
+ * Theme mode, animations-enabled, panel position, and keyboard shortcut
+ * are all chrome-module-owned regardless of count — read back via
+ * getChromeShellDefaults() before the theme instance or first paint
+ * exist, so a saved preference actually survives a reload instead of
+ * resetting until Panel Settings happens to be opened again.
  *
  * A module never owns its own modal — `services.shell` (setPosition/
  * setKeyboardShortcut/setTitle/panelEl) is how a module reaches the one
@@ -1112,8 +1120,21 @@ JLib.render = function render(opts) {
   if (!modules.length) return;
 
   const single = modules.length === 1 && !opts.forceDashboard;
+
+  // Theme mode/animations and shell position/shortcut are ALWAYS chrome-
+  // module-owned now (never per-userscript) — both `full`'s nested Panel
+  // Settings tab and the cog mount the exact same shared chrome module
+  // instance, so reading its persisted values here (before the theme
+  // instance or first paint exist) is what makes a saved preference
+  // actually survive a page reload instead of silently resetting to
+  // defaults until Panel Settings happens to be opened again.
+  const shellDefaults = JLib.modules.settingsPanel.getChromeShellDefaults();
   const themeStore = JLib.storage.createStore([], { storageKeyPrefix: 'jlib_shell_theme' });
-  const themeService = JLib.theme.create({ store: themeStore });
+  const themeService = JLib.theme.create({
+    store: themeStore,
+    defaultMode: shellDefaults.themeMode,
+    animationsEnabled: shellDefaults.showAnimations,
+  });
 
   const services = {
     dashboardMode: !single,
@@ -1124,16 +1145,6 @@ JLib.render = function render(opts) {
   };
 
   let modal = null;
-  let activeId = modules[0].id;
-
-  function mountInto(mod, container) {
-    const variant = single ? mod.standaloneVariant : mod.dashboardVariant;
-    (variant || mod).mount(container, services);
-  }
-  function unmountFrom(mod) {
-    const variant = single ? mod.standaloneVariant : mod.dashboardVariant;
-    if ((variant || mod).unmount) (variant || mod).unmount();
-  }
 
   modal = JLib.elements.modal.create({
     id: 'jlib-shell',
@@ -1150,62 +1161,85 @@ JLib.render = function render(opts) {
         },
       };
 
-      // A module can request shell-level config (title/position/shortcut)
-      // once, at first mount — used by Settings Panel's standalone variant
-      // to apply whatever it last had saved.
-      const firstMod = single ? modules[0] : null;
-      const firstVariant = firstMod && (firstMod.standaloneVariant || firstMod);
-      if (firstVariant && firstVariant.getShellConfig) {
-        const cfg = firstVariant.getShellConfig();
-        if (cfg.title) modal.setTitle(cfg.title);
-        if (cfg.position) modal.setPosition(cfg.position);
-        if (cfg.keyboardShortcut !== undefined) modal.setKeyboardShortcut(cfg.keyboardShortcut);
-      }
+      // Position/shortcut are chrome-module-owned regardless of single vs.
+      // dashboard mode (see shellDefaults above) — apply them here so the
+      // very first paint already reflects whatever was last saved.
+      if (shellDefaults.position) modal.setPosition(shellDefaults.position);
+      if (shellDefaults.keyboardShortcut !== undefined) modal.setKeyboardShortcut(shellDefaults.keyboardShortcut);
 
       if (single) {
-        mountInto(modules[0], bodyEl);
+        // Standalone: the settings module (if that's what's registered)
+        // mounts its `full` variant — Panel Settings and About live
+        // inline as tabs alongside the userscript's own settings, since
+        // there's no dashboard to keep them apart. Any other kind of
+        // solo module (no .full/.lite pair) just mounts itself.
+        const mod = modules[0];
+        const target = mod.full || mod;
+        target.mount(bodyEl, services);
       } else {
-        const cogBtn = el('button', { className: 'jlib-dashboard-cog', attrs: { title: 'Dashboard settings' } }, ['\u2699']);
-        const sidebar = el('div', { className: 'jlib-dashboard-sidebar' });
-        const content = el('div', { className: 'jlib-dashboard-content' });
-        bodyEl.appendChild(el('div', { className: 'jlib-dashboard-body' }, [sidebar, content]));
+        const CHROME_ID = '__chromeSettings__'; // sentinel — never in `modules`, never counts toward module count
+        let currentModuleId = null; // null = menu showing
 
-        const header = modal.panelEl.querySelector('.jlib-modal-header');
-        if (header) header.insertBefore(cogBtn, header.lastChild);
-
-        function renderTabs() {
-          JLib.elements.tabs.render(sidebar, modules.map((m) => ({ id: m.id, label: m.label })), activeId, selectModule);
-        }
-        function selectModule(id) {
-          const prevMod = modules.find((m) => m.id === activeId);
-          if (prevMod) unmountFrom(prevMod);
-          activeId = id;
-          renderTabs();
-          renderActive();
-        }
-        function renderActive() {
-          while (content.firstChild) content.removeChild(content.firstChild);
-          const mod = modules.find((m) => m.id === activeId);
-          if (mod) mountInto(mod, content);
+        function targetFor(id) {
+          if (id === CHROME_ID) return JLib.modules.settingsPanel.getSharedChromeModule(services);
+          const mod = modules.find((m) => m.id === id);
+          if (!mod) return null;
+          // Dashboard-menu-opened modules use `lite` where present (no
+          // chrome tab mixed in — that's what the cog is for instead);
+          // anything without a lite/full pair just mounts as itself.
+          return mod.lite || mod;
         }
 
-        let cogPopover = null;
-        function renderCogPopover() {
-          if (cogPopover) {
-            cogPopover.remove();
-            cogPopover = null;
+        function showMenu() {
+          if (currentModuleId) {
+            const target = targetFor(currentModuleId);
+            if (target && target.unmount) target.unmount();
+            currentModuleId = null;
+          }
+          renderShell();
+        }
+
+        function openModule(id, afterMount) {
+          currentModuleId = id;
+          renderShell();
+          if (afterMount) afterMount();
+        }
+
+        function renderMenu() {
+          const list = el('div', { className: 'jlib-dashboard-menu' });
+          modules.forEach((m) => {
+            const btn = JLib.elements.button.button(m.label, () => openModule(m.id), { className: 'jlib-dashboard-menu-item' });
+            list.appendChild(btn);
+          });
+          return el('div', { className: 'jlib-dashboard-menu-wrap' }, [
+            el('div', { className: 'jlib-dashboard-menu-title' }, [opts.title || 'Dashboard']),
+            list,
+          ]);
+        }
+
+        function renderShell() {
+          while (bodyEl.firstChild) bodyEl.removeChild(bodyEl.firstChild);
+          if (!currentModuleId) {
+            bodyEl.appendChild(renderMenu());
             return;
           }
-          cogPopover = el('div', { className: 'jlib-dashboard-cog-popover' });
-          const chromeOwner = modules.find((m) => m.renderChromeSettings);
-          if (chromeOwner) chromeOwner.renderChromeSettings(cogPopover, services);
-          else cogPopover.appendChild(el('div', {}, ['(No module exposes chrome settings.)']));
-          modal.panelEl.appendChild(cogPopover);
+          const target = targetFor(currentModuleId);
+          const backBtn = JLib.elements.button.button('\u2190 Back to Dashboard', showMenu, { className: 'jlib-dashboard-back' });
+          const moduleContainer = el('div', { className: 'jlib-dashboard-module-container' });
+          bodyEl.appendChild(el('div', { className: 'jlib-dashboard-module-wrap' }, [backBtn, moduleContainer]));
+          if (target) target.mount(moduleContainer, services);
         }
-        cogBtn.addEventListener('click', renderCogPopover);
 
-        renderTabs();
-        renderActive();
+        // Cog doesn't call into the userscript's own settings module at
+        // all — it opens the shared chrome module directly (theme/
+        // position/shortcut/backup/about), full-screen, same as any menu
+        // item. That module is never registered and never counts toward
+        // module count; the userscript's own "Settings" menu entry still
+        // opens the real settings module's `lite` variant, unaffected.
+        const cogBtn = JLib.elements.button.button('\u2699', () => openModule(CHROME_ID), { className: 'jlib-dashboard-cog' });
+        if (modal.headerActionsEl) modal.headerActionsEl.appendChild(cogBtn);
+
+        renderShell();
       }
 
       themeService.apply(modal.panelEl, { skipAnimation: true });
@@ -1215,11 +1249,26 @@ JLib.render = function render(opts) {
   });
 
   const DASHBOARD_CSS = `
-    .jlib-dashboard-cog { background: var(--jsp-hover); border:none; border-radius:50%; color: var(--jsp-muted); width:28px; height:28px; font-size:14px; cursor:pointer; margin-right:6px; }
-    .jlib-dashboard-body { display:flex; flex:1; min-height:0; overflow:hidden; height:100%; }
-    .jlib-dashboard-sidebar { width:180px; flex-shrink:0; background: var(--jsp-sidebar-bg); border-right:1px solid var(--jsp-border); padding:14px 10px; overflow-y:auto; }
-    .jlib-dashboard-content { flex:1; min-width:0; overflow-y:auto; padding:20px 26px 24px; }
-    .jlib-dashboard-cog-popover { position:absolute; top:56px; right:16px; background: var(--jsp-bg); border:1px solid var(--jsp-border); border-radius:12px; box-shadow: var(--jsp-shadow); padding:14px; width:280px; z-index:1000000; }
+    .jlib-dashboard-cog { background: var(--jsp-hover); border:none; border-radius:50%; color: var(--jsp-muted); width:30px; height:30px; padding:0; display:flex; align-items:center; justify-content:center; font-size:14px; cursor:pointer; }
+    .jlib-dashboard-menu-wrap { display:flex; flex-direction:column; height:100%; overflow-y:auto; padding:10px 4px 4px; }
+    .jlib-dashboard-menu-title {
+      text-align:center; font-size:20px; font-weight:800; letter-spacing:0.08em; text-transform:uppercase;
+      color: var(--jsp-accent); margin:10px 0 24px; flex-shrink:0;
+    }
+    .jlib-dashboard-menu { display:flex; flex-direction:column; gap:10px; max-width:420px; margin:0 auto; width:100%; }
+    .jlib-dashboard-menu-item {
+      padding:16px 20px; border-radius:8px; background: var(--jsp-hover); border:1px solid var(--jsp-border);
+      font-size:14px; font-weight:600; letter-spacing:0.04em; text-align:center; text-transform:uppercase;
+      transition: background .15s ease, border-color .15s ease, color .15s ease;
+    }
+    .jlib-dashboard-menu-item:hover { background: var(--jsp-accent-bg); border-color: var(--jsp-accent); color: var(--jsp-accent); }
+    .jlib-dashboard-module-wrap { display:flex; flex-direction:column; height:100%; overflow:hidden; }
+    .jlib-dashboard-back {
+      align-self:flex-start; margin:0 0 12px; padding:7px 14px; border-radius:6px; background: var(--jsp-hover);
+      color: var(--jsp-muted); font-size:12px; font-weight:600; flex-shrink:0;
+    }
+    .jlib-dashboard-back:hover { color: var(--jsp-text); }
+    .jlib-dashboard-module-container { flex:1; min-height:0; overflow-y:auto; }
   `;
   const style = document.createElement('style');
   style.textContent = DASHBOARD_CSS;
