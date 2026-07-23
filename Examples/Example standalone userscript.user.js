@@ -12,10 +12,10 @@
 // ==/UserScript==
 
 // Only one module registered -> JLib.render() builds a single shell with
-// no tab strip and no cog. Settings Panel's `full` variant mounts
-// directly, with its own "Panel Settings" tab (theme/position/shortcut/
-// about/export-import) rendered inline instead of living behind a cog,
-// since there's no dashboard chrome to put a cog on.
+// no menu and no cog. Settings Panel mounts its `full` variant directly:
+// "Panel Settings" (theme/position/shortcut/backup) and "About" (JLib's
+// own entry plus this script's, since there's no dashboard to keep them
+// apart) both render inline as tabs alongside the script's own settings.
 
 (function () {
   'use strict';
@@ -25,10 +25,17 @@
     title: 'Example Script',
     categories: [{ id: 'general', label: 'General', icon: '\u2699' }],
     features: [
-      { id: 'enabled', type: 'boolean', category: 'general', label: 'Enabled', default: true, description: 'Turn the script on or off.' },
+      { id: 'enabled', type: 'boolean', category: 'general', label: 'Enabled', default: true, description: 'Turn the script on or off.', keywords: ['on', 'off', 'toggle'] },
     ],
-    about: (container) => {
-      container.appendChild(document.createTextNode('Example Script v3.0.0'));
+    about: {
+      summary: 'Example Script v3.0.0 \u2014 a reference userscript demonstrating JLib\u2019s standalone mode.',
+      details: (container) => {
+        container.appendChild(
+          document.createTextNode(
+            'This script exists to demonstrate JLib with exactly one module registered, which is what puts you directly into this panel with no dashboard menu and no cog \u2014 Panel Settings and About just live as tabs alongside the script\u2019s own settings. It doesn\u2019t do anything to the page itself; the one setting it has ("Enabled") is a placeholder to show how a boolean feature renders. See Examples/Example standalone userscript.user.js in the JLib repo for the full source.'
+          )
+        );
+      },
     },
   });
   JLib.registerModule(settingsModule);
