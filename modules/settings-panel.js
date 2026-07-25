@@ -79,8 +79,16 @@ JLib.modules.settingsPanel = (function () {
 
   function buildVariant(config, variantOpts) {
     variantOpts = variantOpts || {};
-    const namespace = config.namespace;
-    const title = config.title || namespace;
+    // config.namespace is now the LOCAL piece of the identity — the full
+    // storage/lock/channel identity is composed against whatever script
+    // registered via JLib.registerScript(). Refuses (same as every other
+    // registration-gated feature) if no script has registered.
+    const namespace = JLib.composeNamespace(config.namespace);
+    if (!namespace) {
+      console.warn('[JLib.modules.settingsPanel] refused to build — no script registered. Call JLib.registerScript({ namespace }) before creating a Settings Panel.');
+      return null;
+    }
+    const title = config.title || config.namespace;
     const categories = config.categories || [];
     const allFeatures = config.features || [];
     const storableFeatures = allFeatures.filter((f) => f.type !== 'action' && f.type !== 'info');
@@ -565,50 +573,70 @@ JLib.modules.settingsPanel = (function () {
   // getSharedChromeModule below) and full-screen (the dashboard cog, via
   // services.js). Same namespace either way, so storage is consistent
   // regardless of which one a person actually opened.
+  function buildLanguageOptions() {
+    const current = JLib.i18n.getDefaultDictionary();
+    const defaultLabel = `${JLib.i18n.t('Default')} (${current.selfName})`;
+    const options = [{ value: '__default__', label: defaultLabel }, { value: 'en', label: 'English' }];
+    JLib.i18n.listDictionaries().forEach((d) => {
+      if (d.lang === 'en') return; // already has its own explicit row above
+      options.push({ value: d.lang, label: d.selfName });
+    });
+    return options;
+  }
+
   function buildChromeConfig(services) {
     const theme = services.theme;
     const shell = services.shell;
-    const themeOptions = [{ value: 'followWebsite', label: 'Follow Website' }, { value: 'system', label: 'System' }].concat(
-      Object.keys(theme.themes).map((name) => ({ value: name, label: name.charAt(0).toUpperCase() + name.slice(1) }))
+    const t = JLib.i18n.t;
+    const themeOptions = [{ value: 'followWebsite', label: t('Follow Website') }, { value: 'system', label: t('System') }].concat(
+      Object.keys(theme.themes).map((name) => ({ value: name, label: t(name.charAt(0).toUpperCase() + name.slice(1)) }))
     );
     const positionOptions = [
-      { value: 'center', label: 'Center' },
-      { value: 'topLeft', label: 'Top Left' },
-      { value: 'topRight', label: 'Top Right' },
-      { value: 'bottomLeft', label: 'Bottom Left' },
-      { value: 'bottomRight', label: 'Bottom Right' },
+      { value: 'center', label: t('Center') },
+      { value: 'topLeft', label: t('Top Left') },
+      { value: 'topRight', label: t('Top Right') },
+      { value: 'bottomLeft', label: t('Bottom Left') },
+      { value: 'bottomRight', label: t('Bottom Right') },
     ];
     return {
       categories: [
-        { id: 'appearance', label: 'Appearance', icon: '\ud83c\udfa8' },
-        { id: 'behavior', label: 'Behavior', icon: '\ud83e\udded' },
-        { id: 'shortcut', label: 'Shortcut', icon: '\u2328\ufe0f' },
-        { id: 'backup', label: 'Backup', icon: '\ud83d\udcbe' },
+        { id: 'appearance', label: t('Appearance'), icon: '\ud83c\udfa8' },
+        { id: 'behavior', label: t('Behavior'), icon: '\ud83e\udded' },
+        { id: 'shortcut', label: t('Shortcut'), icon: '\u2328\ufe0f' },
+        { id: 'backup', label: t('Backup'), icon: '\ud83d\udcbe' },
       ],
       features: [
         {
-          id: 'theme', type: 'enum', category: 'appearance', label: 'Theme',
+          id: 'theme', type: 'enum', category: 'appearance', label: t('Theme'),
           description: 'Follow Website samples the page and WCAG-corrects the result.',
           options: themeOptions, default: 'followWebsite',
           onChange: (v) => theme.setMode(v, shell.panelEl),
         },
         {
-          id: 'refreshTheme', type: 'action', category: 'appearance', label: 'Re-sample site colors',
+          id: 'refreshTheme', type: 'action', category: 'appearance', label: t('Re-sample site colors'),
           description: 'Force a fresh palette extraction from the current page.', buttonLabel: '\u21bb Refresh',
           onClick: () => theme.forceReExtract(shell.panelEl),
         },
         {
-          id: 'showAnimations', type: 'boolean', category: 'appearance', label: 'Show Animations',
+          id: 'language', type: 'enum', category: 'appearance', label: t('Language'),
+          description: 'Which registered dictionary this panel displays text in.',
+          options: buildLanguageOptions(), default: '__default__',
+          onChange: (v) => {
+            if (v !== '__default__') JLib.i18n.setDefault(v);
+          },
+        },
+        {
+          id: 'showAnimations', type: 'boolean', category: 'appearance', label: t('Show Animations'),
           description: 'Panel transitions and theme crossfade.', default: true,
           onChange: (v) => { if (theme.setAnimationsEnabled) theme.setAnimationsEnabled(v); },
         },
         {
-          id: 'panelPosition', type: 'enum', category: 'behavior', label: 'Position',
+          id: 'panelPosition', type: 'enum', category: 'behavior', label: t('Position'),
           description: 'Where the panel appears on screen.', options: positionOptions, default: 'center',
           onChange: (v) => shell.setPosition(v),
         },
         {
-          id: 'keyboardShortcut', type: 'custom', category: 'shortcut', label: 'Keyboard Shortcut',
+          id: 'keyboardShortcut', type: 'custom', category: 'shortcut', label: t('Keyboard Shortcut'),
           description: 'Click, then press a key combination.', default: 'Ctrl+Shift+D',
           render: (value, onChange) => {
             const display = el('div', { className: 'jlib-shortcut-input', attrs: { tabindex: '0', role: 'button' } }, [value || '(none)']);
@@ -702,6 +730,13 @@ JLib.modules.settingsPanel = (function () {
     if (!config || !config.namespace) throw new Error('JLib.modules.settingsPanel.create requires config.namespace');
     const full = buildVariant(config, { includeChromeTab: true });
     const lite = buildVariant(config, { includeChromeTab: false });
+    if (!full || !lite) {
+      // buildVariant already warned why (no script registered). Return a
+      // module-shaped object that mounts nothing rather than throwing —
+      // registration failures degrade gracefully everywhere else in this
+      // codebase, this stays consistent with that.
+      return { id: 'settings', label: config.title || config.namespace, order: 0, mount: () => {}, unmount: () => {} };
+    }
     return {
       id: 'settings',
       label: config.title || config.namespace,
