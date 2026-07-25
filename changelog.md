@@ -1,5 +1,125 @@
 # Changelog
 
+## Development phase complete
+
+Everything below this note is the initial build-out — new systems,
+architecture passes, full rewrites. Entries from here forward are
+bug-fix-in-real-use and polish passes instead: this codebase now has a
+real toolset (settings/dashboard, notifications, a full color/font/
+structure provider family, localization, cross-tab-aware storage) built
+against the scope laid out in [SCOPE.md](SCOPE.md) and the rules laid
+out in [REFERENCE.md](REFERENCE.md).
+
+## v4.0.0 — providers, localization, cross-tab storage, mandatory registration
+
+Breaking. `JLib.registerScript({ namespace })` must now be called before
+anything namespace-scoped will operate — Settings Panel instances,
+`JLib.cache`. A script that doesn't register gets a `console.warn` and a
+refusal, not a silent default. See `REFERENCE.md` — "registration is
+existence" now applies to the userscript itself, not just modules.
+
+**New — provider family**
+
+- `colorProvider`: rebuilt on vendored OKLCH color math (perceptually
+  uniform, replacing the old HSL-based contrast nudging). Anchor-relative
+  sampling (`getPalette(el)`) alongside the existing whole-page
+  `getGlobalPalette()`. CSS custom-property detection before falling
+  back to visual sampling. A seed-hue confidence spectrum — confirm the
+  site's real accent, blend, or override outright, scaled continuously
+  by how far off-hue the sample is, not a binary yes/no. Two-tier caching
+  (per-hostname global, `WeakRef`-tracked per-anchor local) with a
+  single shared, subtree-aware `MutationObserver`. `invalidate()` /
+  `invalidateAll()`, `preview()` for debugging.
+- `fontProvider`: font-family detection only, always-length-3 ranked
+  list (real detected fonts padded with JLib's own authored font as the
+  guaranteed final slot).
+- `fontProvider.layout`: real text-fitting — fixed shrink → wrap →
+  truncate (binary-search truncation, not char-by-char), a too-small-
+  for-even-an-ellipsis floor that warns instead of looping.
+- `radiusProvider` / `shadowProvider` / `borderProvider`: same
+  sample-then-fallback shape as `colorProvider`, "must provide" —
+  never return empty.
+- `superProvider.css`: composition facade over all five —
+  `resolve()`/`apply()`/`reveal()`/`transition()`/`fitText()`.
+- `JLib.dedupe`: general request/task deduplication. Fixed a real bug in
+  `superProvider.css` — it was independently re-resolving the same
+  anchor boundary once per mini-provider called, instead of once.
+- Shared animation clock: one `requestAnimationFrame` loop drives every
+  transitioning property together (fixes cross-property desync that two
+  independently-timed CSS transitions can't guarantee). Ambient
+  (near-linear, tuned to stay under peripheral notice) and salient
+  (short, punchy) presets, duration scaled by real perceptual color
+  distance rather than a fixed constant.
+
+**New — localization**
+
+- `JLib.i18n`: registration-based, two-tier dictionary lookup. A bare
+  string is the default key (`"Save"`); an explicitly qualified variant
+  (`"Save (verb)"`) only where English itself would already phrase
+  something differently by role — no tagging system, no forced
+  classification of every string.
+- English registers as a normal dictionary, not a hardcoded special case
+  — the only difference is it registers first.
+- Default-status conflicts (two dictionaries both claiming default) deny
+  *both* and fall back to English — never resolved by `@require` load
+  order.
+- Settings Panel language dropdown: every registered dictionary,
+  alphabetized by its own self-declared name, "Default" pinned to the
+  top and translated through whichever dictionary is currently active.
+
+**New — storage**
+
+- `JLib.cache`: non-settings persistent storage. IndexedDB as the sole
+  physical backend (chosen after verifying Tampermonkey's real, current
+  failure modes — extension-messaging overflow around 23MB, key-volume
+  failure at 100k+ keys — are specific to the GM-storage pipeline, which
+  this never touches). In-memory layer on top for synchronous-feeling
+  reads, hybrid eager/lazy loading gated by measured size. Debounced
+  writes. `BroadcastChannel` cross-tab sync with a per-key logical clock
+  resolving out-of-order message arrival. Startup and bfcache-resume
+  reconciliation (`pageshow`/`event.persisted`, verified to be the real
+  restoration signal — `visibilitychange` is not the same event and
+  doesn't reliably fire for this case). Settings remain on GM storage,
+  unchanged — this is specifically for everything that isn't a
+  userscript's own settings.
+- `JLib.composeNamespace()`: sub-identities (a Settings Panel instance,
+  a cache key) supply only their local piece; JLib composes it against
+  the registered script namespace. Validated against the one confirmed
+  Web Locks platform restriction (names starting with `-` are reserved).
+
+**New — Settings Panel**
+
+- Deep linking (`buildLink`/`parseLink`/`openLink`/`navigateTo`) and a
+  breadcrumb.
+- A real Back button — restores a full prior view snapshot (expanded
+  categories, scroll position), not just a tree-parent jump.
+- Tokenized "smart-enough" search (stop-words, diacritic folding, tiered
+  exact/prefix/substring scoring, length-scaled fuzzy tolerance) with an
+  optional per-feature `keywords: [...]` array folded into matching.
+- New `'info'` feature type (summary + optional "More Info" drill-in),
+  used for every About entry, available to any feature in any category.
+- Chrome settings (theme/position/shortcut/backup/about) are now real
+  schema features rendered through the same dispatch path as any
+  userscript's own settings — no more bespoke hand-built chrome UI.
+
+**Fixed**
+
+- Notification's `modal` presenter, dashboard menu items, the back
+  button, and the cog button now go through `JLib.elements.modal` /
+  `JLib.elements.button` instead of hand-rolled DOM.
+- Toast presenter now uses anchored (not global) palette sampling and
+  `superProvider.css.reveal()` — a toast lives in one screen corner, not
+  spread across the page, so it should theme itself locally.
+- Notification history now persists across a page reload via
+  `JLib.cache` — previously session-only.
+- Real overflow protection (`fontProvider.layout`) on the two genuinely
+  fixed-width, single-line zones that needed it: the sidebar tab list
+  and the modal title. Row labels/descriptions were checked and found to
+  already wrap correctly by default — deliberately left alone rather
+  than forced through fitting logic that would have made them worse.
+
+---
+
 ## v3.0.0 — full rewrite
 
 Breaking. Old `@require` paths (`src/dom-toolkit.js`, `src/settings-schema.js`,
