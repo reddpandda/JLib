@@ -233,7 +233,13 @@ JLib.elements.modal = (function () {
     function setTitle(title) {
       if (panel) {
         const h2 = panel.querySelector('.jlib-modal-header h2');
-        if (h2) h2.textContent = title;
+        if (h2) {
+          h2.style.whiteSpace = 'nowrap';
+          h2.style.overflow = 'hidden';
+          h2.style.minWidth = '0';
+          const font = JLib.fontProvider.fontType(h2, 1);
+          JLib.fontProvider.layout.fitText(h2, title, font);
+        }
       }
     }
 
@@ -262,9 +268,9 @@ JLib.elements.modal = (function () {
     .jlib-modal-overlay { position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); z-index: 999997; display:none; }
     .jlib-modal-overlay.active { display:block; }
     .jlib-modal-panel {
-      position: fixed; color: var(--jsp-text); background: var(--jsp-bg); border-radius:16px; z-index:999999;
+      position: fixed; color: var(--jsp-text); background: var(--jsp-bg); border-radius: var(--jsp-radius, 16px); z-index:999999;
       width:700px; height:640px; max-width:94vw; max-height:82vh; box-shadow: var(--jsp-shadow); display:none; overflow:hidden; flex-direction:column;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+      font-family: var(--jsp-font, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif);
       box-sizing: border-box;
     }
     .jlib-modal-panel.active { display:flex; }
@@ -274,7 +280,7 @@ JLib.elements.modal = (function () {
     .jlib-modal-panel[data-position="bottomLeft"] { bottom:24px; left:24px; }
     .jlib-modal-panel[data-position="bottomRight"] { bottom:24px; right:24px; }
     .jlib-modal-header { padding:18px 24px; border-bottom:1px solid var(--jsp-border); display:flex; justify-content:space-between; align-items:center; flex-shrink:0; }
-    .jlib-modal-header h2 { margin:0; color: var(--jsp-accent); font-size:18px; font-weight:600; }
+    .jlib-modal-header h2 { margin:0; color: var(--jsp-accent); font-size:18px; font-weight:600; flex:1; min-width:0; overflow:hidden; white-space:nowrap; }
     .jlib-modal-header-actions { display:flex; align-items:center; gap:6px; flex-shrink:0; }
     .jlib-modal-close { background: var(--jsp-hover); border:none; border-radius:50%; color: var(--jsp-muted); width:30px; height:30px; font-size:17px; cursor:pointer; }
     .jlib-modal-body { flex:1; min-height:0; overflow-y:auto; padding:20px 26px 24px; }
@@ -507,7 +513,8 @@ JLib.elements.tabs = (function () {
         container.appendChild(el('div', { className: 'jlib-tabs-label' }, [item.groupLabel]));
         lastGroup = item.groupLabel;
       }
-      const children = [el('span', {}, [item.label])];
+      const labelSpan = el('span', { className: 'jlib-tab-item-label' }, [item.label]);
+      const children = [labelSpan];
       if (item.badge) children.push(item.badge);
       const node = el(
         'div',
@@ -517,6 +524,15 @@ JLib.elements.tabs = (function () {
       node.addEventListener('click', () => onSelect(item.id));
       makeKeyboardActivatable(node);
       container.appendChild(node);
+      // Real overflow risk zone (flagged during design, not hypothetical):
+      // this sidebar is fixed-width, and a localized label can genuinely
+      // be longer than the English original. fitText runs shrink -> wrap
+      // -> truncate against the label's own real bounding box, which only
+      // exists because it's flex:1;min-width:0 below — without that, a
+      // flex child never shrinks past its own content's intrinsic width
+      // and this check would trivially always "fit."
+      const font = JLib.fontProvider.fontType(node, 1);
+      JLib.fontProvider.layout.fitText(labelSpan, item.label, font);
     });
   }
 
@@ -524,6 +540,7 @@ JLib.elements.tabs = (function () {
     .jlib-tabs-label { font-size:10px; font-weight:700; letter-spacing:.06em; text-transform:uppercase; color: var(--jsp-muted); padding:6px 10px 4px; }
     .jlib-tabs-divider { height:1px; background: var(--jsp-border); margin:8px 6px; }
     .jlib-tab-item { display:flex; justify-content:space-between; align-items:center; padding:7px 10px; margin:1px 0; border-radius:6px; border-left:2px solid transparent; cursor:pointer; font-size:13px; }
+    .jlib-tab-item-label { flex:1; min-width:0; overflow:hidden; }
     .jlib-tab-item:hover { background: var(--jsp-hover); }
     .jlib-tab-item.active { background: var(--jsp-accent-bg); border-left-color: var(--jsp-accent); color: var(--jsp-accent); font-weight:600; }
   `;
