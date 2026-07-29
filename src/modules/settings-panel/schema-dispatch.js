@@ -33,7 +33,21 @@ JLib._sp.buildFeatureRow = function buildFeatureRow(S, feature, scopeId, setting
   const depOk = !dep || dep(settingsObj);
   const interactive = applies && depOk;
   const labelSuffix = !applies ? ' (not available)' : '';
-  const ctx = { scope: scopeId, isLive: JLib._sp.isLiveScope(S, scopeId), settings: settingsObj };
+  const ctx = {
+    scope: scopeId,
+    isLive: JLib._sp.isLiveScope(S, scopeId),
+    settings: settingsObj,
+    // Narrow, one-directional channel for an author who wants one
+    // central stylesheet instead of a <style> tag co-located with their
+    // own content (which already works unmodified, no shadow-DOM
+    // awareness needed — this is purely a convenience for a different
+    // authoring preference, never exposes the real root reference).
+    addStyle: (cssText) => {
+      const sheet = new CSSStyleSheet();
+      sheet.replaceSync(cssText);
+      JLib.shadow.adoptStylesheet(sheet, JLib.shadow.getRoot());
+    },
+  };
 
   function commit(newValue) {
     settingsObj[feature.id] = newValue;
