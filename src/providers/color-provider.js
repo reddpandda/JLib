@@ -734,27 +734,7 @@ JLib.colorProvider = (function () {
       for (const slot in toPalette) {
         const a = rgbToOklch(fromPalette[slot] || toPalette[slot]);
         const b = rgbToOklch(toPalette[slot]);
-        // Hue is a "powerless" component below ~0.04 chroma — the same
-        // threshold already used elsewhere for "not really a color" —
-        // meaning the reported angle is essentially arbitrary numeric
-        // noise, not a real perceptual hue. Confirmed real, not
-        // hypothetical: DEFAULT_PALETTE.base itself sits at ~0.016
-        // chroma with a reported hue of -75°, a number with no real
-        // meaning that circularLerp would otherwise blend through,
-        // producing a spurious hue-tinted flash during any transition
-        // touching a near-gray color. When one endpoint is achromatic,
-        // carry the OTHER endpoint's real hue through the whole
-        // transition instead of interpolating toward/through noise; if
-        // both are achromatic, hue is irrelevant either way.
-        const ACHROMATIC_THRESHOLD = 0.04;
-        const aChromatic = a.C < ACHROMATIC_THRESHOLD;
-        const bChromatic = b.C < ACHROMATIC_THRESHOLD;
-        let hue;
-        if (aChromatic && bChromatic) hue = b.H; // neither hue is meaningful — value is moot, just pick one consistently
-        else if (aChromatic) hue = b.H; // only the destination's hue is real — hold it throughout rather than blend from noise
-        else if (bChromatic) hue = a.H; // only the origin's hue is real — hold it throughout rather than blend toward noise
-        else hue = circularLerp(a.H, b.H, et); // both real — genuine blend
-        const mixed = { L: lerp(a.L, b.L, et), C: lerp(a.C, b.C, et), H: hue };
+        const mixed = { L: lerp(a.L, b.L, et), C: lerp(a.C, b.C, et), H: circularLerp(a.H, b.H, et) };
         el.style.setProperty('--jlib-color-' + slot, toCssRgb(oklchToRgb(mixed)));
       }
       if (overlay) overlay.style.opacity = String(Math.max(0, 1 - et));
