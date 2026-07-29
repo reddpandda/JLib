@@ -186,10 +186,21 @@ JLib.notifications = (function () {
       if (container) return container;
       container = el('div', {
         attrs: {
-          style: 'position:fixed;bottom:24px;right:24px;z-index:999999;display:flex;flex-direction:column;gap:8px;pointer-events:none;',
+          popover: 'manual',
+          style: 'position:fixed;bottom:24px;right:24px;z-index:999999;display:flex;flex-direction:column;gap:8px;pointer-events:none;margin:0;padding:0;border:none;background:transparent;',
         },
       });
-      document.body.appendChild(container);
+      // popover="manual", deliberately not "auto" — auto-mode popovers
+      // form a light-dismiss stack where opening a new one typically
+      // closes other open auto popovers, which would silently break
+      // multiple simultaneous toasts (already real, tested behavior).
+      // Manual mode still gets the real benefit — native top-layer
+      // promotion, no z-index management needed against a hostile host
+      // page — while our own staling logic stays the sole thing that
+      // ever shows or hides it.
+      const target = JLib.shadow.getRoot();
+      target.appendChild(container);
+      container.showPopover();
       return container;
     }
     return core.subscribe((event, record) => {
@@ -234,9 +245,10 @@ JLib.notifications = (function () {
     function ensureContainer() {
       if (container) return container;
       container = el('div', {
-        attrs: { style: 'position:fixed;top:0;left:0;right:0;z-index:999999;display:flex;flex-direction:column;' },
+        attrs: { popover: 'manual', style: 'position:fixed;top:0;left:0;right:0;z-index:999999;display:flex;flex-direction:column;margin:0;padding:0;border:none;background:transparent;' },
       });
-      document.body.appendChild(container);
+      JLib.shadow.getRoot().appendChild(container);
+      container.showPopover();
       return container;
     }
     return core.subscribe((event, record) => {
