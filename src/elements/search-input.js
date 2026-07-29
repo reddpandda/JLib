@@ -17,9 +17,11 @@ JLib.elements = JLib.elements || {};
  *
  * inputField() adds the UI half — a debounced text input, since running
  * matchScore() against every candidate on every keystroke with no
- * debounce is real, avoidable CPU work.
+ * debounce is real, avoidable CPU work. Style delivery via discovery,
+ * same pattern as button.js/inputs.js, since inputField() returns a
+ * freshly-created element with no real destination yet.
  *
- * Depends on: JLib.dom, JLib.utils (debounce)
+ * Depends on: JLib.dom, JLib.utils (debounce), JLib.elements.discovery
  */
 
 
@@ -117,6 +119,9 @@ JLib.elements.search = (function () {
     const input = el('input', { className: 'jlib-search-input', attrs: { type: 'text', placeholder: opts.placeholder || 'Search...' } });
     const fireQuery = debounce(() => opts.onQuery && opts.onQuery(input.value), debounceMs);
     input.addEventListener('input', fireQuery);
+    JLib.elements.discovery.registerPending(input, (root) => {
+      JLib.shadow.adoptStylesheet(SEARCH_SHEET, root);
+    });
     return input;
   }
 
@@ -124,15 +129,8 @@ JLib.elements.search = (function () {
     .jlib-search-input { width:100%; background: var(--jsp-hover); color: var(--jsp-text); border:1px solid var(--jsp-border); border-radius:8px; padding:8px 12px; font-size:13px; box-sizing:border-box; }
     .jlib-search-input:focus { outline:none; border-color: var(--jsp-accent); }
   `;
-  let stylesInjected = false;
-  function injectStylesOnce() {
-    if (stylesInjected) return;
-    stylesInjected = true;
-    const style = document.createElement('style');
-    style.textContent = SEARCH_CSS;
-    document.head.appendChild(style);
-  }
-  injectStylesOnce();
+  const SEARCH_SHEET = new CSSStyleSheet();
+  SEARCH_SHEET.replaceSync(SEARCH_CSS);
 
   return { normalize: normalizeText, foldDiacritics, tokenize, editDistance, fuzzyTolerance, matchScore, search, inputField };
 })();
