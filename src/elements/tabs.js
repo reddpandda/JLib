@@ -5,25 +5,24 @@ JLib.elements = JLib.elements || {};
 // elements/tabs.js
 // ============================================================================
 /*
- * Tabs — generic vertical nav list, extracted from settings-panel.js v1's
- * buildNavItem()/renderSidebar(). v1's version was settings-specific
- * (scopes + "Panel Settings" + extraSections hardcoded); this version is
- * a plain { items, activeId, onSelect } list so both Settings Panel and
- * the dashboard's module-switcher can use the same element instead of
- * each hand-rolling nav markup.
+ * Tabs — generic vertical nav list. render(container, ...) always
+ * receives an already-connected container (the sidebar, appended to the
+ * shell earlier by its caller) — unlike a factory that returns a
+ * freshly-created, not-yet-inserted element, there's nothing to wait
+ * for here: container.getRootNode() is already meaningful the instant
+ * render() runs, so stylesheet adoption happens directly, synchronously,
+ * with no need for elements/discovery.js's pending-connection mechanism.
  *
- * Depends on: JLib.dom
+ * Depends on: JLib.dom, JLib.elements.inputs, JLib.fontProvider
  */
-
 
 JLib.elements.tabs = (function () {
   const { el } = JLib.dom;
   const { makeKeyboardActivatable } = JLib.elements.inputs;
 
   // items: [{ id, label, badge? (DOM node), groupLabel? }]
-  // groupLabel on an item starts a new labeled section before it (matches
-  // v1's "Scopes" / "Settings" sidebar-label divider behavior).
   function render(container, items, activeId, onSelect) {
+    JLib.shadow.adoptStylesheet(TABS_SHEET, container.getRootNode());
     while (container.firstChild) container.removeChild(container.firstChild);
     let lastGroup = null;
     items.forEach((item) => {
@@ -43,13 +42,6 @@ JLib.elements.tabs = (function () {
       node.addEventListener('click', () => onSelect(item.id));
       makeKeyboardActivatable(node);
       container.appendChild(node);
-      // Real overflow risk zone (flagged during design, not hypothetical):
-      // this sidebar is fixed-width, and a localized label can genuinely
-      // be longer than the English original. fitText runs shrink -> wrap
-      // -> truncate against the label's own real bounding box, which only
-      // exists because it's flex:1;min-width:0 below — without that, a
-      // flex child never shrinks past its own content's intrinsic width
-      // and this check would trivially always "fit."
       const font = JLib.fontProvider.fontType(node, 1);
       JLib.fontProvider.layout.fitText(labelSpan, item.label, font);
     });
@@ -63,15 +55,8 @@ JLib.elements.tabs = (function () {
     .jlib-tab-item:hover { background: var(--jsp-hover); }
     .jlib-tab-item.active { background: var(--jsp-accent-bg); border-left-color: var(--jsp-accent); color: var(--jsp-accent); font-weight:600; }
   `;
-  let stylesInjected = false;
-  function injectStylesOnce() {
-    if (stylesInjected) return;
-    stylesInjected = true;
-    const style = document.createElement('style');
-    style.textContent = TABS_CSS;
-    document.head.appendChild(style);
-  }
-  injectStylesOnce();
+  const TABS_SHEET = new CSSStyleSheet();
+  TABS_SHEET.replaceSync(TABS_CSS);
 
   return { render };
 })();
