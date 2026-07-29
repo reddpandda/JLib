@@ -188,3 +188,13 @@ JLib.console.register('settingsPanel.undeclaredScope', {
   explain: 'Scope label lookups and view rendering both degrade silently when this happens — the panel will appear to work while quietly showing the wrong (or no) scope.',
   hint: 'Make sure getCurrentScope() only ever returns an id that appears in your scopes array.',
 });
+JLib.console.register('shadow.contentInIsolatedContext', {
+  template: () => `Content from this script now lives in an isolated context — document.head styles won't reach it.`,
+  explain: 'JLib\u2019s own chrome (Settings Panel, notifications) renders inside a closed shadow root, protecting it from — and protecting the host page from — CSS collisions. A stylesheet added to document.head has no effect on anything sealed inside a shadow tree.',
+  hint: 'Use a <style> tag as a child of your own content (works unmodified, no shadow-DOM awareness needed), or ctx.addStyle(cssText) if you specifically want one central stylesheet.',
+});
+JLib.console.register('cache.scriptVersionChanged', {
+  template: (from, to) => `This script's version changed since last session (${from} -> ${to}) — JLib.cache.versionChanged is now true.`,
+  explain: 'Purely informational — nothing was wiped, migrated, or otherwise touched automatically. Some version bumps change what a cached value means or how it should be shaped; many don\u2019t. This flag exists so an author can decide, rather than JLib guessing and risking a false-positive wipe of good data.',
+  hint: 'Check JLib.cache.versionChanged (after awaiting any cache operation) if your script needs to react to its own version changing.',
+});
