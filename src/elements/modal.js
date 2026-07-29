@@ -5,27 +5,40 @@ JLib.elements = JLib.elements || {};
 // elements/modal.js
 // ============================================================================
 /*
- * Modal — generic overlay + focus-trapped panel shell, extracted from
- * settings-panel.js v1's build()/open()/close()/destroy()/trapFocus()/
- * getFocusableElements(). v1 had this logic private and settings-specific
- * (baked into JLib.settingsPanel's closure); this version knows nothing
- * about settings — it just owns overlay+panel chrome, Esc-to-close,
- * click-outside-to-close, keyboard focus trap, and a keyboard shortcut
- * toggle. Any module (Settings Panel, a future one) builds its own
- * content and hands it to this to get the chrome for free.
+ * Modal — native <dialog> + showModal(), styled directly as the real
+ * panel (no invisible wrapper, no hand-built overlay div). Real,
+ * borrowed behavior instead of owned code wherever the platform already
+ * does the job correctly: native top-layer promotion (structural
+ * z-fighting win — no z-index management needed against a hostile host
+ * page), native ::backdrop, native focus-trap on open.
  *
- * Depends on: JLib.dom
+ * One deliberate override: native Tab-cycling escapes to the browser's
+ * own chrome once it reaches the last focusable element (a real,
+ * documented W3C APA decision, not a bug) — kept as an owned piece
+ * because a fully-looping trap is the behavior this library wants.
+ * Everything else about the native focus-trap — correct even through
+ * shadow DOM boundaries, confirmed — is left alone.
+ *
+ * Scroll-lock and click-outside-close both needed zero changes from the
+ * pre-<dialog> version — scroll-lock only ever touched document.body,
+ * and click-outside-close is a direct listener on the dialog element
+ * itself (clicking the ::backdrop area lands the click event's target
+ * on the dialog, not on any of its content), neither of which depends
+ * on the overlay div this version removes.
+ *
+ * config.appendTo — defaults to JLib.shadow.getRoot(), since both real
+ * call sites in this codebase (the dashboard/standalone shell, the
+ * notification modal presenter) are JLib's own internal chrome and
+ * belong there. An author calling this directly for their own separate
+ * modal can pass document.body (or anywhere else) explicitly — shortcut,
+ * never a requirement, in the direction that matters here: nothing
+ * forces an author's own modal into our shadow root against their will.
+ *
+ * Depends on: JLib.dom, JLib.shadow, JLib.fontProvider
  */
 
-
 JLib.elements.modal = (function () {
-  const { el, $ } = JLib.dom;
-
-  function getFocusableElements(container) {
-    return Array.prototype.slice
-      .call(container.querySelectorAll('button, [tabindex], input, select, a[href]'))
-      .filter((elm) => !elm.disabled && elm.offsetParent !== null);
-  }
+  const { el } = JLib.dom;
 
   function formatShortcutFromEvent(e) {
     const parts = [];
@@ -39,26 +52,29 @@ JLib.elements.modal = (function () {
     return parts.join('+');
   }
 
+  // Real focusable elements inside a live root — used only for our own
+  // kept Tab-loop, not for native focus-trapping (the browser already
+  // does that correctly on showModal(), including through shadow
+  // boundaries).
+  function getFocusableElements(container) {
+    return Array.prototype.slice
+      .call(container.querySelectorAll('button, [tabindex], input, select, a[href]'))
+      .filter((elm) => !elm.disabled && elm.offsetParent !== null);
+  }
+
   // create({ id, title, position, content: (bodyEl) => void, footerText,
-  //   keyboardShortcut, onOpen, onClose }) -> { open, close, toggle,
-  //   destroy, panelEl, bodyEl }
-  //
-  // `content` is called once at build time with the empty body container —
-  // caller appends whatever it wants (sidebar+content split, a single
-  // form, anything). This element doesn't know or care what's inside.
+  //   keyboardShortcut, onOpen, onClose, appendTo }) -> { open, close,
+  //   toggle, destroy, panelEl, bodyEl }
   function create(config) {
     config = config || {};
     if (!config.id) throw new Error('JLib.elements.modal.create requires config.id');
 
     let built = false;
-    let panel, overlay, bodyEl, shortcutListener, rightGroup;
+    let panel, bodyEl, shortcutListener, rightGroup;
 
     function build() {
       if (built) return;
       built = true;
-
-      overlay = el('div', { className: 'jlib-modal-overlay', id: config.id + '-overlay' });
-      document.body.appendChild(overlay);
 
       const closeBtn = el('button', { className: 'jlib-modal-close' }, ['\u00d7']);
       rightGroup = el('div', { className: 'jlib-modal-header-actions' }, [closeBtn]);
@@ -66,31 +82,53 @@ JLib.elements.modal = (function () {
       bodyEl = el('div', { className: 'jlib-modal-body' });
       const footer = config.footerText ? el('div', { className: 'jlib-modal-footer' }, [config.footerText]) : null;
 
+      // The dialog IS the panel — styled directly, no separate wrapper.
       panel = el(
-        'div',
+        'dialog',
         { className: 'jlib-modal-panel', id: config.id, attrs: { 'data-position': config.position || 'center' } },
         [header, bodyEl].concat(footer ? [footer] : [])
       );
-      document.body.appendChild(panel);
+
+      const appendTarget = config.appendTo || JLib.shadow.getRoot();
+      appendTarget.appendChild(panel);
+      JLib.shadow.adoptStylesheet(MODAL_SHEET, panel.getRootNode());
 
       if (config.content) config.content(bodyEl);
 
       closeBtn.addEventListener('click', close);
-      overlay.addEventListener('click', close);
+      // Click-outside-close: a click that lands on the dialog element
+      // itself (not any of its content) means it landed on the
+      // ::backdrop area — clicking real content inside the dialog never
+      // reaches this listener as `e.target === panel`, since the click
+      // target is whatever specific element was actually clicked.
+      panel.addEventListener('click', (e) => {
+        if (e.target === panel) close();
+      });
       panel.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-          close();
-          return;
-        }
         if (e.key !== 'Tab') return;
+        // The one deliberate override: native Tab-cycling escapes to
+        // browser chrome once it passes the last focusable element —
+        // real W3C APA decision, not a bug, but this library wants a
+        // fully-looping trap instead. Intercepting here means the
+        // native fallback-to-chrome behavior never gets a chance to
+        // fire, since we've already claimed the keydown.
         const focusable = getFocusableElements(panel);
         if (!focusable.length) return;
         const first = focusable[0];
         const last = focusable[focusable.length - 1];
-        if (e.shiftKey && document.activeElement === first) {
+        // panel.getRootNode().activeElement, not document.activeElement
+        // — confirmed spec behavior: document.activeElement retargets to
+        // the shadow HOST when the real focused element is inside a
+        // shadow tree, so a direct comparison against document.activeElement
+        // would silently never match once this panel lives in our shadow
+        // root. getRootNode() on an element inside a shadow tree returns
+        // that tree's own root, which carries the real, non-retargeted
+        // activeElement.
+        const activeEl = panel.getRootNode().activeElement;
+        if (e.shiftKey && activeEl === first) {
           e.preventDefault();
           last.focus();
-        } else if (!e.shiftKey && document.activeElement === last) {
+        } else if (!e.shiftKey && activeEl === last) {
           e.preventDefault();
           first.focus();
         }
@@ -118,46 +156,28 @@ JLib.elements.modal = (function () {
       document.body.style.overflow = prevBodyOverflow;
       prevBodyOverflow = null;
     }
-    // Belt-and-suspenders for sites whose own scroll containers keep
-    // scrolling under body{overflow:hidden} (scroll-chaining on a nested
-    // scroll region isn't stopped by locking the body alone) — block
-    // wheel/touch events that land on the overlay itself. Events that
-    // land on the panel's own scroll regions (bodyEl, sidebar, etc.)
-    // aren't touched, since those need to keep scrolling normally.
-    function blockOverlayScroll(e) {
-      e.preventDefault();
-    }
 
     function open() {
       build();
-      panel.classList.add('active');
-      overlay.classList.add('active');
+      panel.showModal(); // native top-layer, native ::backdrop, native
+                          // inert-ification of everything outside — all
+                          // borrowed, none of it owned code
       lockBodyScroll();
-      overlay.addEventListener('wheel', blockOverlayScroll, { passive: false });
-      overlay.addEventListener('touchmove', blockOverlayScroll, { passive: false });
-      const focusable = getFocusableElements(panel);
-      if (focusable.length) focusable[0].focus();
       if (config.onOpen) config.onOpen();
     }
     function close() {
-      if (panel) panel.classList.remove('active');
-      if (overlay) overlay.classList.remove('active');
+      if (panel && panel.open) panel.close();
       unlockBodyScroll();
-      if (overlay) {
-        overlay.removeEventListener('wheel', blockOverlayScroll);
-        overlay.removeEventListener('touchmove', blockOverlayScroll);
-      }
       if (config.onClose) config.onClose();
     }
     function toggle() {
-      if (panel && panel.classList.contains('active')) close();
+      if (panel && panel.open) close();
       else open();
     }
     function destroy() {
       if (shortcutListener) document.removeEventListener('keydown', shortcutListener);
       unlockBodyScroll();
       if (panel) panel.remove();
-      if (overlay) overlay.remove();
       built = false;
     }
     function setPosition(pos) {
@@ -211,20 +231,19 @@ JLib.elements.modal = (function () {
   }
 
   const MODAL_CSS = `
-    .jlib-modal-overlay { position: fixed; top:0; left:0; width:100%; height:100%; background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); z-index: 999997; display:none; }
-    .jlib-modal-overlay.active { display:block; }
     .jlib-modal-panel {
-      position: fixed; color: var(--jsp-text); background: var(--jsp-bg); border-radius: var(--jsp-radius, 16px); z-index:999999;
-      width:700px; height:640px; max-width:94vw; max-height:82vh; box-shadow: var(--jsp-shadow); display:none; overflow:hidden; flex-direction:column;
+      color: var(--jsp-text); background: var(--jsp-bg); border-radius: var(--jsp-radius, 16px); border: none; padding: 0;
+      width:700px; height:640px; max-width:94vw; max-height:82vh; box-shadow: var(--jsp-shadow); overflow:hidden; flex-direction:column;
       font-family: var(--jsp-font, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif);
       box-sizing: border-box;
     }
-    .jlib-modal-panel.active { display:flex; }
-    .jlib-modal-panel[data-position="center"] { top:50%; left:50%; transform: translate(-50%,-50%); }
-    .jlib-modal-panel[data-position="topLeft"] { top:24px; left:24px; }
-    .jlib-modal-panel[data-position="topRight"] { top:24px; right:24px; }
-    .jlib-modal-panel[data-position="bottomLeft"] { bottom:24px; left:24px; }
-    .jlib-modal-panel[data-position="bottomRight"] { bottom:24px; right:24px; }
+    .jlib-modal-panel::backdrop { background: rgba(0,0,0,0.7); backdrop-filter: blur(4px); }
+    .jlib-modal-panel[open] { display:flex; }
+    .jlib-modal-panel[data-position="center"] { margin: auto; }
+    .jlib-modal-panel[data-position="topLeft"] { margin: 24px auto auto 24px; }
+    .jlib-modal-panel[data-position="topRight"] { margin: 24px 24px auto auto; }
+    .jlib-modal-panel[data-position="bottomLeft"] { margin: auto auto 24px 24px; }
+    .jlib-modal-panel[data-position="bottomRight"] { margin: auto 24px 24px auto; }
     .jlib-modal-header { padding:18px 24px; border-bottom:1px solid var(--jsp-border); display:flex; justify-content:space-between; align-items:center; flex-shrink:0; }
     .jlib-modal-header h2 { margin:0; color: var(--jsp-accent); font-size:18px; font-weight:600; flex:1; min-width:0; overflow:hidden; white-space:nowrap; }
     .jlib-modal-header-actions { display:flex; align-items:center; gap:6px; flex-shrink:0; }
@@ -232,12 +251,6 @@ JLib.elements.modal = (function () {
     .jlib-modal-body { flex:1; min-height:0; overflow-y:auto; padding:20px 26px 24px; }
     .jlib-modal-footer { padding:10px 24px; border-top:1px solid var(--jsp-border); font-size:11px; color: var(--jsp-muted); flex-shrink:0; }
 
-    /* Cross-browser scrollbars for every scroll region we create — Firefox
-       reads scrollbar-width/scrollbar-color, everything else (Chrome,
-       Edge, Safari) reads the ::-webkit-scrollbar-* pseudo-elements.
-       Applied broadly via attribute-free class targeting so any current
-       or future scroll container inside our chrome picks it up by just
-       using overflow-y:auto — no per-element opt-in needed. */
     .jlib-modal-panel, .jlib-modal-panel * {
       scrollbar-width: thin;
       scrollbar-color: var(--jsp-accent) transparent;
@@ -247,16 +260,6 @@ JLib.elements.modal = (function () {
     .jlib-modal-panel *::-webkit-scrollbar-thumb { background: var(--jsp-accent); border-radius: 8px; }
     .jlib-modal-panel *::-webkit-scrollbar-thumb:hover { background: var(--jsp-accent-hover); }
 
-    /* Defensive resets — host pages (Twitch among them) sometimes ship
-       global rules targeting bare tag selectors (button, input, select)
-       that are equal or higher specificity than a same-page stylesheet
-       loaded later, which can silently reposition or restyle our controls
-       even though the clickable hit-area stays correct (only the paint
-       is affected). Resetting to unset and re-establishing only what we
-       need means our own class rules below (.jlib-btn, .jlib-toggle, etc,
-       already higher specificity than a bare tag selector regardless of
-       load order) are what actually paints these elements, not whatever
-       the host page declared for <button>/<input>/<select> globally. */
     .jlib-modal-panel button,
     .jlib-modal-panel input,
     .jlib-modal-panel select {
@@ -278,16 +281,8 @@ JLib.elements.modal = (function () {
       box-sizing: border-box;
     }
   `;
-
-  let stylesInjected = false;
-  function injectStylesOnce() {
-    if (stylesInjected) return;
-    stylesInjected = true;
-    const style = document.createElement('style');
-    style.textContent = MODAL_CSS;
-    document.head.appendChild(style);
-  }
-  injectStylesOnce();
+  const MODAL_SHEET = new CSSStyleSheet();
+  MODAL_SHEET.replaceSync(MODAL_CSS);
 
   return { create, getFocusableElements };
 })();
