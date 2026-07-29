@@ -8,9 +8,12 @@ JLib.elements = JLib.elements || {};
  * Inputs — toggle, dropdown, number, and text row builders. button() was
  * split out into elements/button.js; actionRow() here delegates to it.
  *
- * Depends on: JLib.dom, JLib.elements.button
+ * Style delivery: one constructable stylesheet, adopted via discovery
+ * the instant a row's wrapper element actually connects — registered
+ * once, in rowWrapper(), since every row builder returns through it.
+ *
+ * Depends on: JLib.dom, JLib.elements.button, JLib.elements.discovery
  */
-
 
 JLib.elements.inputs = (function () {
   const { el } = JLib.dom;
@@ -28,7 +31,11 @@ JLib.elements.inputs = (function () {
     let cls = 'jlib-row';
     if (opts.child) cls += ' jlib-row-child';
     if (opts.interactive === false) cls += ' jlib-row-disabled';
-    return el('div', { className: cls }, [info, control]);
+    const wrapper = el('div', { className: cls }, [info, control]);
+    JLib.elements.discovery.registerPending(wrapper, (root) => {
+      JLib.shadow.adoptStylesheet(INPUTS_SHEET, root);
+    });
+    return wrapper;
   }
 
   function infoBlock(label, desc) {
@@ -124,15 +131,8 @@ JLib.elements.inputs = (function () {
     .jlib-toggle.active .jlib-toggle-slider { transform: translateX(19px); }
     .jlib-select, .jlib-number-input, .jlib-text-input { background: var(--jsp-hover); color: var(--jsp-text); border:1px solid var(--jsp-border); border-radius:6px; padding:6px 8px; font-size:12px; min-width:120px; }
   `;
-  let stylesInjected = false;
-  function injectStylesOnce() {
-    if (stylesInjected) return;
-    stylesInjected = true;
-    const style = document.createElement('style');
-    style.textContent = INPUTS_CSS;
-    document.head.appendChild(style);
-  }
-  injectStylesOnce();
+  const INPUTS_SHEET = new CSSStyleSheet();
+  INPUTS_SHEET.replaceSync(INPUTS_CSS);
 
   return { toggleRow, dropdownRow, numberRow, textRow, actionRow, makeKeyboardActivatable };
 })();
