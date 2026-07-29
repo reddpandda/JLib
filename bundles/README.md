@@ -60,6 +60,7 @@ directly while iterating, rather than rebuilding bundles on every change.
 // @require https://raw.githubusercontent.com/reddpandda/JLib/main/src/services/notifications.js
 // @require https://raw.githubusercontent.com/reddpandda/JLib/main/src/services/module-lifecycle.js
 // @require https://raw.githubusercontent.com/reddpandda/JLib/main/src/services/cache.js
+// @require https://raw.githubusercontent.com/reddpandda/JLib/main/src/elements/discovery.js
 // @require https://raw.githubusercontent.com/reddpandda/JLib/main/src/elements/button.js
 // @require https://raw.githubusercontent.com/reddpandda/JLib/main/src/elements/modal.js
 // @require https://raw.githubusercontent.com/reddpandda/JLib/main/src/elements/inputs.js
@@ -72,7 +73,7 @@ directly while iterating, rather than rebuilding bundles on every change.
 // @require https://raw.githubusercontent.com/reddpandda/JLib/main/src/modules/notification-center.js
 ```
 
-That's 28 lines (27 required + 1 optional module shown). Whatever order
+That's 29 lines (28 required + 1 optional module shown). Whatever order
 suits how you're working is fine to experiment with, but this specific
 order is the one actually proven to load and execute correctly — deviate
 from it and you're on your own for figuring out why something's undefined.
