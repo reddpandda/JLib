@@ -38,9 +38,15 @@ JLib.colorProvider = (function () {
     c /= 255;
     return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
   }
-  function linearToSrgb(c) {
+  // Raw, unclamped conversion — deliberately kept separate from the
+  // clamping step below, since the gamut-mapping fix needs to test
+  // whether a value is ALREADY in-gamut before anything clamps it.
+  function linearToSrgbRaw(c) {
     const v = c <= 0.0031308 ? c * 12.92 : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
-    return Math.max(0, Math.min(255, Math.round(v * 255)));
+    return v * 255;
+  }
+  function linearToSrgb(c) {
+    return Math.max(0, Math.min(255, Math.round(linearToSrgbRaw(c))));
   }
   function rgbToOklab({ r, g, b }) {
     const lr = srgbToLinear(r), lg = srgbToLinear(g), lb = srgbToLinear(b);
@@ -64,6 +70,22 @@ JLib.colorProvider = (function () {
     const lb = -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s;
     return { r: linearToSrgb(lr), g: linearToSrgb(lg), b: linearToSrgb(lb) };
   }
+  // Raw, unclamped variant — needed by the gamut-mapping fix below to
+  // test whether a candidate OKLCH value is already in-gamut, before
+  // anything rounds or clips it.
+  function oklabToRgbRaw({ L, a, b }) {
+    const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+    const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+    const s_ = L - 0.0894841775 * a - 1.291485548 * b;
+    const l = l_ * l_ * l_, m = m_ * m_ * m_, s = s_ * s_ * s_;
+    const lr = 4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s;
+    const lg = -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s;
+    const lb = -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s;
+    return { r: linearToSrgbRaw(lr), g: linearToSrgbRaw(lg), b: linearToSrgbRaw(lb) };
+  }
+  function isInGamutRgb(rgb) {
+    return rgb.r >= 0 && rgb.r <= 255 && rgb.g >= 0 && rgb.g <= 255 && rgb.b >= 0 && rgb.b <= 255;
+  }
   function oklabToOklch({ L, a, b }) {
     const C = Math.hypot(a, b);
     let H = (Math.atan2(b, a) * 180) / Math.PI;
@@ -77,8 +99,33 @@ JLib.colorProvider = (function () {
   function rgbToOklch(rgb) {
     return oklabToOklch(rgbToOklab(rgb));
   }
+  // gamutMapOklch({L,C,H}) -> in-gamut {L,C,H}, via binary search on
+  // chroma with L and H held FIXED — the CSS Color 4 spec's own
+  // recommended algorithm. Confirmed necessary, not redundant with
+  // anything the platform already does: a direct empirical test (three
+  // browser engines, canvas rasterization readback) showed real browsers
+  // do NOT do this — they do naive per-channel clipping instead, exactly
+  // the technique this function replaces, confirmed byte-identical to
+  // clipping the raw unclamped math. Naive clipping distorts both hue
+  // and lightness (a yellow-green input rendered as pure red in the
+  // confirmed test); holding L/H fixed and only reducing chroma
+  // preserves the intended color's actual character.
+  function gamutMapOklch(oklch) {
+    const raw = oklchToRgbRawUnmapped(oklch);
+    if (isInGamutRgb(raw)) return oklch;
+    let lo = 0, hi = oklch.C;
+    for (let i = 0; i < 20; i++) {
+      const mid = (lo + hi) / 2;
+      if (isInGamutRgb(oklchToRgbRawUnmapped({ L: oklch.L, C: mid, H: oklch.H }))) lo = mid;
+      else hi = mid;
+    }
+    return { L: oklch.L, C: lo, H: oklch.H };
+  }
+  function oklchToRgbRawUnmapped(oklch) {
+    return oklabToRgbRaw(oklchToOklab(oklch));
+  }
   function oklchToRgb(oklch) {
-    return oklabToRgb(oklchToOklab(oklch));
+    return oklabToRgb(oklchToOklab(gamutMapOklch(oklch)));
   }
 
   // Perceptual distance between two sRGB colors — plain Euclidean distance
@@ -277,13 +324,27 @@ JLib.colorProvider = (function () {
   // from `el`, capped at 8 hops, stop at the first ancestor with an opaque
   // background OR position fixed/sticky (both signal "this is a real visual
   // surface, not just a layout wrapper") OR documentElement.
+  //
+  // Must always resolve to the true light-DOM host, never stop inside
+  // our own shadow tree — sampling something inside our own chrome would
+  // tell colorProvider nothing about the real page. parentElement
+  // becomes null both at the genuine top of the light DOM AND at a
+  // shadow root's own boundary; getRootNode().host distinguishes the
+  // two (a ShadowRoot has a real .host, `document` does not), letting
+  // the walk cross back out into the light DOM rather than stopping
+  // early.
   function resolveAnchorBoundaryUncached(el) {
     let node = el;
     let hops = 0;
     while (node && node !== document.documentElement && hops < 8) {
       const cs = getComputedStyle(node);
       if (isOpaqueColor(cs.backgroundColor) || cs.position === 'fixed' || cs.position === 'sticky') return node;
-      node = node.parentElement;
+      let next = node.parentElement;
+      if (!next) {
+        const root = node.getRootNode();
+        next = root && root.host ? root.host : null;
+      }
+      node = next;
       hops++;
     }
     return document.body;
@@ -313,10 +374,56 @@ JLib.colorProvider = (function () {
   // single-highest-saturation-wins (which lets one loud outlier hijack the
   // whole palette), but the most saturation-weighted-by-occurrence color
   // among what's actually there.
+  // ==========================================================================
+  // Sampling fidelity — bucket 1 vs. buckets 2/3
+  // ==========================================================================
+  // getComputedStyle preserves an author's pre-clip color intent for
+  // wide-gamut CSS (oklch()/color()) — confirmed empirically: it does
+  // NOT reflect the browser's real, rasterized, on-screen pixel for an
+  // out-of-gamut value. Faithfully matching a specific piece of content
+  // already on the real page (bucket 1) means simulating what a human
+  // eye actually sees there, not what the author's raw CSS said —
+  // confirmed via direct testing (canvas 2D fillStyle + getImageData)
+  // to reveal the real, naive-clipped rendered value, unlike
+  // getComputedStyle on a light-DOM element.
+  //
+  // Content inside our OWN known shadow root (buckets 2/3 — floating
+  // chrome, nothing specific being visually merged with) skips this
+  // entirely and uses proper math directly — there's no real rendered
+  // pixel to chase, so simulating the platform's confirmed-bad clipping
+  // would just reintroduce the exact distortion this whole fix exists
+  // to avoid, aimed at nothing real.
+  let fidelityProbeCanvas = null;
+  function simulateRenderedColor(cssColorString) {
+    if (!fidelityProbeCanvas) {
+      fidelityProbeCanvas = document.createElement('canvas');
+      fidelityProbeCanvas.width = 1;
+      fidelityProbeCanvas.height = 1;
+    }
+    const ctx = fidelityProbeCanvas.getContext('2d');
+    try {
+      ctx.fillStyle = cssColorString;
+      ctx.clearRect(0, 0, 1, 1);
+      ctx.fillRect(0, 0, 1, 1);
+      const data = ctx.getImageData(0, 0, 1, 1).data;
+      return { r: data[0], g: data[1], b: data[2] };
+    } catch (e) {
+      return parseRgb(cssColorString); // canvas rejected the value — fall back to our own parser rather than lose the sample entirely
+    }
+  }
+  // resolveSampledColor(cssColorString, sourceEl) — the one choke point
+  // every real-page color read goes through. sourceEl is whatever
+  // element the string was read from, used only to determine which
+  // bucket applies.
+  function resolveSampledColor(cssColorString, sourceEl) {
+    const isOurs = JLib.shadow && JLib.shadow.isOurRoot(sourceEl.getRootNode());
+    return isOurs ? parseRgb(cssColorString) : simulateRenderedColor(cssColorString);
+  }
+
   function sampleAnchor(boundaryEl) {
     const boundaryStyles = getComputedStyle(boundaryEl);
-    const base = isOpaqueColor(boundaryStyles.backgroundColor) ? parseRgb(boundaryStyles.backgroundColor) : DEFAULT_PALETTE.base;
-    const ink = isOpaqueColor(boundaryStyles.color) ? parseRgb(boundaryStyles.color) : relativeLuminance(base) < 0.5 ? { r: 255, g: 255, b: 255 } : { r: 0, g: 0, b: 0 };
+    const base = isOpaqueColor(boundaryStyles.backgroundColor) ? resolveSampledColor(boundaryStyles.backgroundColor, boundaryEl) : DEFAULT_PALETTE.base;
+    const ink = isOpaqueColor(boundaryStyles.color) ? resolveSampledColor(boundaryStyles.color, boundaryEl) : relativeLuminance(base) < 0.5 ? { r: 255, g: 255, b: 255 } : { r: 0, g: 0, b: 0 };
 
     const candidates = Array.prototype.slice.call(boundaryEl.querySelectorAll('button, a, [role="button"]')).slice(0, 30);
     const buckets = new Map(); // rounded-hue-bucket -> { count, sample }
@@ -324,7 +431,7 @@ JLib.colorProvider = (function () {
       const styles = getComputedStyle(node);
       [styles.backgroundColor, styles.borderColor, styles.color].forEach((str) => {
         if (!isOpaqueColor(str)) return;
-        const rgb = parseRgb(str);
+        const rgb = resolveSampledColor(str, node);
         const oklch = rgbToOklch(rgb);
         if (oklch.C < 0.03) return; // not saturated enough to be a real accent candidate
         const bucket = Math.round(oklch.H / 15) * 15; // group nearby hues together
@@ -436,7 +543,7 @@ JLib.colorProvider = (function () {
     if (opts.seedHue === undefined && anchorCache.has(boundary)) return anchorCache.get(boundary);
     let palette = buildPalette(boundary);
     if (opts.seedHue !== undefined) {
-      palette = applySeedHue(palette, opts.seedHue, opts.seedHueOverrideThresholdDeg);
+      palette = applySeedHue(palette, opts.seedHue, opts.seedHueOverrideThresholdDeg, { seedLightness: opts.seedLightness, seedChroma: opts.seedChroma });
     }
     anchorCache.set(boundary, palette);
     trackLiveBoundary(boundary);
@@ -450,22 +557,63 @@ JLib.colorProvider = (function () {
   //  - moderate hue distance -> blend, weighted continuously by distance
   //  - confidently far off-hue (>= threshold) -> seed hue wins outright,
   //    still borrowing local lightness/chroma bounds
-  function applySeedHue(palette, seedHueDeg, thresholdOverride) {
+  // Perceptual-distance budget for how far the seed-hue PREFERENCE layer
+  // (not correctness passes, which always apply regardless) is allowed
+  // to pull the final accent from the site's own real sampled color.
+  // Measured in OKLab Euclidean distance via perceptualDistance() — the
+  // same metric already used for shared-clock animation timing
+  // elsewhere in this file. A generous but real ceiling, not a hard
+  // wall: exceeding it scales the whole preference contribution back
+  // proportionally rather than clipping abruptly.
+  const MAX_SEED_HUE_DRIFT = 0.35;
+
+  // applySeedHue(palette, seedHueDeg, thresholdOverride, opts?) — opts
+  // may include seedLightness/seedChroma (0-1 OKLCH values) for full
+  // L/C/H harmonization, not just hue. Omitting them preserves the
+  // original hue-only behavior exactly (targets default to the site's
+  // own sampled L/C, so nothing changes for a caller only ever passing
+  // seedHue).
+  function applySeedHue(palette, seedHueDeg, thresholdOverride, opts) {
+    opts = opts || {};
     const threshold = thresholdOverride !== undefined ? thresholdOverride : SEED_HUE_OVERRIDE_THRESHOLD_DEG;
-    const accentOklch = rgbToOklch(palette.accent);
+    const originalAccent = palette.accent; // true baseline — drift is always measured against THIS, never a prior pipeline stage's output
+    const accentOklch = rgbToOklch(originalAccent);
+    const targetL = opts.seedLightness !== undefined ? opts.seedLightness : accentOklch.L;
+    const targetC = opts.seedChroma !== undefined ? opts.seedChroma : accentOklch.C;
+
+    let resultOklch;
     if (accentOklch.C < 0.04) {
-      palette.accent = oklchToRgb({ L: accentOklch.L, C: 0.15, H: seedHueDeg });
+      resultOklch = { L: targetL, C: Math.max(targetC, 0.15), H: seedHueDeg };
     } else {
       const dist = hueDistance(accentOklch.H, seedHueDeg);
       if (dist >= threshold) {
-        palette.accent = oklchToRgb({ L: accentOklch.L, C: accentOklch.C, H: seedHueDeg });
+        resultOklch = { L: targetL, C: targetC, H: seedHueDeg };
       } else {
         const weight = dist / threshold;
-        const blendedH = circularLerp(accentOklch.H, seedHueDeg, weight);
-        palette.accent = oklchToRgb({ L: accentOklch.L, C: accentOklch.C, H: blendedH });
+        resultOklch = {
+          L: lerp(accentOklch.L, targetL, weight),
+          C: lerp(accentOklch.C, targetC, weight),
+          H: circularLerp(accentOklch.H, seedHueDeg, weight),
+        };
       }
     }
-    palette.accent = ensureContrast(palette.accent, palette.base, 3);
+
+    // oklchToRgb() already runs the real gamut-mapping fix internally —
+    // correctness applies here unconditionally, before the drift budget
+    // is even checked, exactly as designed: correctness spends first,
+    // preference gets whatever's left.
+    let candidateRgb = oklchToRgb(resultOklch);
+    const drift = perceptualDistance(candidateRgb, originalAccent);
+    if (drift > MAX_SEED_HUE_DRIFT) {
+      const scaleBack = MAX_SEED_HUE_DRIFT / drift;
+      candidateRgb = oklchToRgb({
+        L: lerp(accentOklch.L, resultOklch.L, scaleBack),
+        C: lerp(accentOklch.C, resultOklch.C, scaleBack),
+        H: circularLerp(accentOklch.H, resultOklch.H, scaleBack),
+      });
+    }
+
+    palette.accent = ensureContrast(candidateRgb, palette.base, 3);
     palette['accent-hover'] = deriveHover(palette.accent);
     return palette;
   }
@@ -586,7 +734,27 @@ JLib.colorProvider = (function () {
       for (const slot in toPalette) {
         const a = rgbToOklch(fromPalette[slot] || toPalette[slot]);
         const b = rgbToOklch(toPalette[slot]);
-        const mixed = { L: lerp(a.L, b.L, et), C: lerp(a.C, b.C, et), H: circularLerp(a.H, b.H, et) };
+        // Hue is a "powerless" component below ~0.04 chroma — the same
+        // threshold already used elsewhere for "not really a color" —
+        // meaning the reported angle is essentially arbitrary numeric
+        // noise, not a real perceptual hue. Confirmed real, not
+        // hypothetical: DEFAULT_PALETTE.base itself sits at ~0.016
+        // chroma with a reported hue of -75°, a number with no real
+        // meaning that circularLerp would otherwise blend through,
+        // producing a spurious hue-tinted flash during any transition
+        // touching a near-gray color. When one endpoint is achromatic,
+        // carry the OTHER endpoint's real hue through the whole
+        // transition instead of interpolating toward/through noise; if
+        // both are achromatic, hue is irrelevant either way.
+        const ACHROMATIC_THRESHOLD = 0.04;
+        const aChromatic = a.C < ACHROMATIC_THRESHOLD;
+        const bChromatic = b.C < ACHROMATIC_THRESHOLD;
+        let hue;
+        if (aChromatic && bChromatic) hue = b.H; // neither hue is meaningful — value is moot, just pick one consistently
+        else if (aChromatic) hue = b.H; // only the destination's hue is real — hold it throughout rather than blend from noise
+        else if (bChromatic) hue = a.H; // only the origin's hue is real — hold it throughout rather than blend toward noise
+        else hue = circularLerp(a.H, b.H, et); // both real — genuine blend
+        const mixed = { L: lerp(a.L, b.L, et), C: lerp(a.C, b.C, et), H: hue };
         el.style.setProperty('--jlib-color-' + slot, toCssRgb(oklchToRgb(mixed)));
       }
       if (overlay) overlay.style.opacity = String(Math.max(0, 1 - et));
@@ -630,6 +798,29 @@ JLib.colorProvider = (function () {
     return reveal(el, buildFn, { source: 'anchor' });
   }
 
+  // detectDisplayGamut() -> 'srgb' | 'p3' | 'rec2020', cached after first
+  // call. The platform's own approximate display-gamut signal — real,
+  // standardized, and confirmed via direct spec/CSSWG research to be
+  // permanently, deliberately approximate (a coarse category, not a
+  // precise per-monitor reading, and that gap is a platform design
+  // choice, not a current limitation waiting on a better API). Relevant
+  // only to the GENERATION path (seed-hue, contrast correction) — never
+  // to plain sampling, since a sampled-and-reproduced color already
+  // inherits whatever the real screen does to it identically on both
+  // the site's own rendering and ours.
+  let cachedGamut = null;
+  function detectDisplayGamut() {
+    if (cachedGamut) return cachedGamut;
+    if (typeof window === 'undefined' || !window.matchMedia) {
+      cachedGamut = 'srgb';
+      return cachedGamut;
+    }
+    if (window.matchMedia('(color-gamut: rec2020)').matches) cachedGamut = 'rec2020';
+    else if (window.matchMedia('(color-gamut: p3)').matches) cachedGamut = 'p3';
+    else cachedGamut = 'srgb';
+    return cachedGamut;
+  }
+
   return {
     // math, exposed for consumers that need it directly (theme.js does)
     rgbToOklch,
@@ -644,6 +835,7 @@ JLib.colorProvider = (function () {
     toCssRgb,
     toCssRgba,
     SEED_HUE_OVERRIDE_THRESHOLD_DEG,
+    detectDisplayGamut,
     // palette contract
     DEFAULT_PALETTE,
     validate,
