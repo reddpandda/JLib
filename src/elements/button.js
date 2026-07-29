@@ -10,9 +10,13 @@ JLib.elements = JLib.elements || {};
  * more often than the row builders (toolbar actions, cog controls,
  * dismiss buttons) rather than always being part of a settings row.
  *
- * Depends on: JLib.dom
+ * Style delivery: a single constructable CSSStyleSheet, parsed once,
+ * adopted into whichever real root a given button ends up in — resolved
+ * via JLib.elements.discovery the instant the element actually connects,
+ * since that destination genuinely doesn't exist yet at creation time.
+ *
+ * Depends on: JLib.dom, JLib.elements.discovery
  */
-
 
 JLib.elements.button = (function () {
   const { el } = JLib.dom;
@@ -27,6 +31,9 @@ JLib.elements.button = (function () {
     const btn = el('button', { className: 'jlib-btn' + variantClass + (opts.className ? ' ' + opts.className : '') }, [label]);
     btn.disabled = !!opts.disabled;
     if (!opts.disabled && onClick) btn.addEventListener('click', onClick);
+    JLib.elements.discovery.registerPending(btn, (root) => {
+      JLib.shadow.adoptStylesheet(BUTTON_SHEET, root);
+    });
     return btn;
   }
 
@@ -37,15 +44,8 @@ JLib.elements.button = (function () {
     .jlib-btn-ghost { background: transparent; }
     .jlib-btn:disabled { opacity:.4; cursor:default; pointer-events:none; }
   `;
-  let stylesInjected = false;
-  function injectStylesOnce() {
-    if (stylesInjected) return;
-    stylesInjected = true;
-    const style = document.createElement('style');
-    style.textContent = BUTTON_CSS;
-    document.head.appendChild(style);
-  }
-  injectStylesOnce();
+  const BUTTON_SHEET = new CSSStyleSheet();
+  BUTTON_SHEET.replaceSync(BUTTON_CSS);
 
   return { button };
 })();
