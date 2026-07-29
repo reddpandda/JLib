@@ -128,5 +128,18 @@ JLib.superProvider.css = (function () {
     return JLib.fontProvider.layout.fitText(container, text, font);
   }
 
-  return { resolve, apply, reveal, transition, fitText };
+  // invalidateAll() — cascades to every mini-provider's own
+  // invalidateAll(). superProvider.css is the composition point; an
+  // author using it shouldn't need to separately know about, or call,
+  // five individual providers' own invalidateAll() functions just to
+  // clear everything this facade resolves.
+  function invalidateAll() {
+    cp.invalidateAll();
+    JLib.radiusProvider.invalidateAll();
+    JLib.shadowProvider.invalidateAll();
+    JLib.borderProvider.invalidateAll();
+    JLib.fontProvider.invalidateAll();
+  }
+
+  return { resolve, apply, reveal, transition, fitText, invalidateAll };
 })();
