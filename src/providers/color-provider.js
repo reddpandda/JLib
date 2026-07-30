@@ -722,6 +722,37 @@ JLib.colorProvider = (function () {
   // proportionally rather than clipping abruptly.
   const MAX_SEED_HUE_DRIFT = 0.35;
 
+  // applySeedHue's own contrast-correction step — deliberately NOT
+  // routed through the general ensureContrast() above. ensureContrast
+  // holds whatever chroma its INPUT rgb already has fixed while
+  // stepping L; applySeedHue's candidateRgb has already been through
+  // one sRGB gamut-map (oklchToRgb -> gamutMapOklch) by the time
+  // contrast is even checked, so its chroma is already whatever sRGB
+  // could hold at the ORIGINAL L, not the true seed request. Stepping
+  // L from there while holding that post-clip chroma fixed either
+  // wastes real available chroma (when the new L has more sRGB
+  // headroom than the original did) or is a no-op (when it has less,
+  // since chroma only ever shrinks going into oklchToRgb, never grows
+  // back). This instead re-gamut-maps idealOklch's REAL requested
+  // chroma/hue fresh at every stepped L — strictly better-or-equal at
+  // each step than reusing the stale post-clip value, same 24-step
+  // budget and step size as ensureContrast, same direction logic.
+  function resolveContrastedAccent(idealOklch, bg, minRatio) {
+    const first = oklchToRgb(idealOklch);
+    if (contrastRatio(first, bg) >= minRatio) return first;
+    const bgIsDark = relativeLuminance(bg) < 0.5;
+    const step = bgIsDark ? 0.035 : -0.035;
+    let L = idealOklch.L;
+    let candidate = first;
+    for (let i = 0; i < 24; i++) {
+      L = Math.max(0, Math.min(1, L + step));
+      candidate = oklchToRgb({ L, C: idealOklch.C, H: idealOklch.H });
+      if (contrastRatio(candidate, bg) >= minRatio) return candidate;
+      if (L === 0 || L === 1) break;
+    }
+    return candidate;
+  }
+
   // applySeedHue(palette, seedHueDeg, thresholdOverride, opts?) — opts
   // may include seedLightness/seedChroma (0-1 OKLCH values) for full
   // L/C/H harmonization, not just hue. Omitting them preserves the
@@ -770,7 +801,7 @@ JLib.colorProvider = (function () {
       candidateRgb = oklchToRgb(idealOklch);
     }
 
-    const correctedAccent = ensureContrast(candidateRgb, palette.base, 3);
+    const correctedAccent = resolveContrastedAccent(idealOklch, palette.base, 3);
     const correctedHover = deriveHover(correctedAccent);
     palette.accent = correctedAccent;
     palette['accent-hover'] = correctedHover;
