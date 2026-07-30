@@ -28,7 +28,17 @@ JLib.superProvider.css = (function () {
   // provider" (font accepts a 1-3 rank; other providers currently just
   // run at default when given any non-false value — richer per-provider
   // instruction shapes are real future work, not yet built for
-  // color/radius/shadow/border).
+  // color/radius/shadow color).
+  //
+  // border is resolved AFTER color, deliberately, not just by file
+  // order — when color is included in the bundle, its resolved
+  // palette.base is passed to borderProvider as opts.targetBg, so a
+  // border sampled here is WCAG-contrast-checked against the SAME
+  // background this bundle's own color slot resolved to, not a
+  // separately-guessed one. When color is excluded (opts.color ===
+  // false), border falls back to borderProvider's own default —
+  // capture-only, no correction — since there's no real background in
+  // this call to correct against.
   function resolve(el, opts) {
     opts = opts || {};
     const bundle = {};
@@ -47,7 +57,8 @@ JLib.superProvider.css = (function () {
       bundle.shadow = JLib.shadowProvider.get(el);
     }
     if (opts.border !== false) {
-      bundle.border = JLib.borderProvider.get(el);
+      const borderOpts = bundle.color ? { targetBg: bundle.color.base } : undefined;
+      bundle.border = JLib.borderProvider.get(el, borderOpts);
     }
     return bundle;
   }
