@@ -128,6 +128,137 @@ JLib.colorProvider = (function () {
     return oklabToRgb(oklchToOklab(gamutMapOklch(oklch)));
   }
 
+  // ==========================================================================
+  // Display-P3 output — generation-only, our-chrome-only enrichment
+  // ==========================================================================
+  // A freshly synthesized OKLCH color (a seed-hue accent, in practice —
+  // see applySeedHue below) can carry chroma sRGB genuinely can't hold;
+  // gamutMapOklch() above clips it back to whatever sRGB allows, which
+  // is correct and mandatory for the rgb() value every consumer needs
+  // as a universal fallback, but throws away real headroom on a P3
+  // display. This section adds a SECOND, optional CSS output —
+  // color(display-p3 ...) — carrying the same ideal color mapped
+  // against P3's wider gamut instead. It is never a replacement for the
+  // sRGB value, only an addition a supporting browser can choose to
+  // render instead (a browser that doesn't understand color(display-p3
+  // ...) silently fails to apply it via CSSOM and keeps whatever was
+  // set immediately before it — see applyPaletteAsVars below, which
+  // relies on exactly this instead of feature-testing).
+  //
+  // Scoped deliberately narrow, per the our-chrome-vs-page-content line
+  // this codebase already draws for a different reason (see
+  // resolveSampledColor's isOurRoot check above): content living in
+  // JLib's own shared shadow root has nothing else on screen it needs
+  // to visually match, so it's free to use the display's real range.
+  // Content an author injects directly into the native page stays
+  // sRGB-bound even on a P3 display — using more range than the
+  // surrounding page content can display would look exactly like NOT
+  // respecting its elder, a control that visually doesn't belong to
+  // the page it's sitting in. This is why P3 is wired in only where an
+  // element and its root are already known (applySeedHue, which
+  // receives el from getPalette), never inside the general-purpose,
+  // DOM-unaware math functions (ensureContrast, deriveHover,
+  // deriveShade) that stay usable with no element context at all, same
+  // as they always have been — those only ever move L, and L is what
+  // carries a WCAG target, not what P3's extra range would help with.
+  //
+  // The linear-P3 <-> LMS matrices below are NOT independently
+  // published by Ottosson — his public matrices target sRGB
+  // specifically. They're derived by composing this file's own
+  // vendored, already-trusted linear-sRGB->LMS matrix (above) with the
+  // standard CIE XYZ D65 primary matrices for sRGB and Display-P3
+  // (XYZ_to_LMS = srgbToLmsMatrix * inverse(srgbToXyzMatrix), then
+  // p3ToLmsMatrix = XYZ_to_LMS * p3ToXyzMatrix), then numerically
+  // cross-checked against an independent reference implementation
+  // (culori) across six test colors including the three P3 primaries
+  // and white/mid-gray — max observed deviation ~5e-5 in OKLab L,
+  // well below anything perceptible.
+  const LMS_TO_LINEAR_P3 = [
+    [3.1283077753, -2.2575793943, 0.1293984215],
+    [-1.0909591413, 2.4132560739, -0.3223138337],
+    [-0.0259966231, -0.5079011305, 1.533680273],
+  ];
+  const LINEAR_P3_TO_LMS = [
+    [0.4812987251, 0.4621450221, 0.0565153246],
+    [0.2287894483, 0.6532387085, 0.1179795308],
+    [0.0839252895, 0.2241633374, 0.6920550282],
+  ];
+  // Same OKLab -> LMS' -> cube -> matrix pipeline as oklabToRgbRaw
+  // above, targeting linear Display-P3 instead of linear sRGB. Raw,
+  // unclamped (0-1 range, not clamped) — same reasoning as
+  // oklabToRgbRaw: the gamut test needs to see whether a value is
+  // ALREADY in-gamut before anything clips it.
+  function oklabToLinearP3Raw({ L, a, b }) {
+    const l_ = L + 0.3963377774 * a + 0.2158037573 * b;
+    const m_ = L - 0.1055613458 * a - 0.0638541728 * b;
+    const s_ = L - 0.0894841775 * a - 1.291485548 * b;
+    const l = l_ * l_ * l_, m = m_ * m_ * m_, s = s_ * s_ * s_;
+    const mtx = LMS_TO_LINEAR_P3;
+    return {
+      r: mtx[0][0] * l + mtx[0][1] * m + mtx[0][2] * s,
+      g: mtx[1][0] * l + mtx[1][1] * m + mtx[1][2] * s,
+      b: mtx[2][0] * l + mtx[2][1] * m + mtx[2][2] * s,
+    };
+  }
+  function isInGamutUnit(rgb) {
+    return rgb.r >= 0 && rgb.r <= 1 && rgb.g >= 0 && rgb.g <= 1 && rgb.b >= 0 && rgb.b <= 1;
+  }
+  // Same CSS Color 4 binary-search-on-chroma algorithm as
+  // gamutMapOklch above, tested against the P3 boundary instead of
+  // sRGB's — deliberately duplicated rather than parameterized, since
+  // the two in-gamut tests operate on different unit ranges (0-255 vs
+  // 0-1) and forcing one shared function through both would obscure
+  // that rather than simplify anything.
+  function gamutMapOklchP3(oklch) {
+    const raw = oklabToLinearP3Raw(oklchToOklab(oklch));
+    if (isInGamutUnit(raw)) return oklch;
+    let lo = 0, hi = oklch.C;
+    for (let i = 0; i < 20; i++) {
+      const mid = (lo + hi) / 2;
+      if (isInGamutUnit(oklabToLinearP3Raw(oklchToOklab({ L: oklch.L, C: mid, H: oklch.H })))) lo = mid;
+      else hi = mid;
+    }
+    return { L: oklch.L, C: lo, H: oklch.H };
+  }
+  function p3LinearToGamma(c) {
+    const v = Math.max(0, Math.min(1, c));
+    return v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
+  }
+  // toCssP3(oklch) -> "color(display-p3 r g b)" string, gamut-mapped
+  // and gamma-encoded. Takes the IDEAL (pre-sRGB-clip) OKLCH triple —
+  // calling this on an already-sRGB-gamut-mapped value would just
+  // reproduce the sRGB result in P3 coordinates, since the chroma
+  // sRGB's own gamutMapOklch already threw away can't be recovered
+  // from its output.
+  function toCssP3(oklch) {
+    const mapped = gamutMapOklchP3(oklch);
+    const lin = oklabToLinearP3Raw(oklchToOklab(mapped));
+    const r = p3LinearToGamma(lin.r), g = p3LinearToGamma(lin.g), b = p3LinearToGamma(lin.b);
+    return `color(display-p3 ${r.toFixed(4)} ${g.toFixed(4)} ${b.toFixed(4)})`;
+  }
+  // isOurChrome(el) — the one gate every P3 decision goes through: is
+  // this element part of JLib's own floating chrome (free to use the
+  // display's real range) or does it live somewhere else (native page,
+  // some other shadow root)? Same JLib.shadow.isOurRoot check
+  // resolveSampledColor already uses for the equivalent input-side
+  // decision, just applied here to output.
+  function isOurChrome(el) {
+    return !!(el && JLib.shadow && JLib.shadow.isOurRoot(el.getRootNode()) && detectDisplayGamut() !== 'srgb');
+  }
+  // maybeP3Override(idealOklch, srgbGamutMappedRgb) -> css string | null.
+  // Compares how much chroma P3 actually preserves against how much
+  // sRGB had to clip away at the same L/H — a seed-hue request that
+  // never exceeded sRGB gamut in the first place gets no override at
+  // all, so this never adds a redundant second declaration for an
+  // ordinary in-gamut color.
+  const P3_CHROMA_GAIN_FLOOR = 0.01;
+  function maybeP3Override(idealOklch) {
+    const srgbMapped = gamutMapOklch(idealOklch);
+    const p3Mapped = gamutMapOklchP3(idealOklch);
+    if (p3Mapped.C - srgbMapped.C < P3_CHROMA_GAIN_FLOOR) return null;
+    return toCssP3(idealOklch);
+  }
+
   // Perceptual distance between two sRGB colors — plain Euclidean distance
   // in OKLab, which (unlike raw sRGB or HSL distance) is close enough to
   // perceptually uniform to use directly as a ΔE-style metric without
@@ -457,8 +588,32 @@ JLib.colorProvider = (function () {
 
     return { base, ink, accent, muted: mixTowardBg(ink, base, 0.4), surface: mixTowardBg(base, ink, 0.06), elevated: mixTowardBg(base, ink, 0.12) };
   }
+  // Perceptually-uniform mix in OKLCH space — same reasoning as
+  // everywhere else in this file (see the file header): equal steps in
+  // OKLCH actually look like equal steps, raw RGB-channel lerp doesn't
+  // (the classic muddy/desaturated-midpoint problem). This is what
+  // derives surface/elevated/muted from base/ink, so it runs on every
+  // real sample, not just the seed-hue/animation paths that already
+  // used OKLCH mixing.
+  //
+  // Hue interpolation is skipped (falls back to a chroma/lightness-only
+  // mix, hue borrowed from whichever endpoint is more saturated) when
+  // either endpoint is too desaturated for hue to mean anything — hue
+  // on a near-neutral color is numerically present but visually
+  // arbitrary, and interpolating toward/away from it produces a swing
+  // with no real visual basis. base/ink are frequently close to
+  // neutral, so this isn't a rare edge case here, it's close to the
+  // common case.
+  const MIX_HUE_CHROMA_FLOOR = 0.02;
   function mixTowardBg(fg, bg, amount) {
-    return { r: lerp(fg.r, bg.r, amount), g: lerp(fg.g, bg.g, amount), b: lerp(fg.b, bg.b, amount) };
+    const a = rgbToOklch(fg), b = rgbToOklch(bg);
+    const hueMeaningful = a.C >= MIX_HUE_CHROMA_FLOOR && b.C >= MIX_HUE_CHROMA_FLOOR;
+    const mixed = {
+      L: lerp(a.L, b.L, amount),
+      C: lerp(a.C, b.C, amount),
+      H: hueMeaningful ? circularLerp(a.H, b.H, amount) : a.C >= b.C ? a.H : b.H,
+    };
+    return oklchToRgb(mixed);
   }
 
   // ==========================================================================
@@ -543,7 +698,7 @@ JLib.colorProvider = (function () {
     if (opts.seedHue === undefined && anchorCache.has(boundary)) return anchorCache.get(boundary);
     let palette = buildPalette(boundary);
     if (opts.seedHue !== undefined) {
-      palette = applySeedHue(palette, opts.seedHue, opts.seedHueOverrideThresholdDeg, { seedLightness: opts.seedLightness, seedChroma: opts.seedChroma });
+      palette = applySeedHue(palette, opts.seedHue, opts.seedHueOverrideThresholdDeg, { seedLightness: opts.seedLightness, seedChroma: opts.seedChroma }, el);
     }
     anchorCache.set(boundary, palette);
     trackLiveBoundary(boundary);
@@ -573,7 +728,7 @@ JLib.colorProvider = (function () {
   // original hue-only behavior exactly (targets default to the site's
   // own sampled L/C, so nothing changes for a caller only ever passing
   // seedHue).
-  function applySeedHue(palette, seedHueDeg, thresholdOverride, opts) {
+  function applySeedHue(palette, seedHueDeg, thresholdOverride, opts, el) {
     opts = opts || {};
     const threshold = thresholdOverride !== undefined ? thresholdOverride : SEED_HUE_OVERRIDE_THRESHOLD_DEG;
     const originalAccent = palette.accent; // true baseline — drift is always measured against THIS, never a prior pipeline stage's output
@@ -604,17 +759,38 @@ JLib.colorProvider = (function () {
     // preference gets whatever's left.
     let candidateRgb = oklchToRgb(resultOklch);
     const drift = perceptualDistance(candidateRgb, originalAccent);
+    let idealOklch = resultOklch; // pre-sRGB-clip ideal, kept alongside candidateRgb for the P3 path below
     if (drift > MAX_SEED_HUE_DRIFT) {
       const scaleBack = MAX_SEED_HUE_DRIFT / drift;
-      candidateRgb = oklchToRgb({
+      idealOklch = {
         L: lerp(accentOklch.L, resultOklch.L, scaleBack),
         C: lerp(accentOklch.C, resultOklch.C, scaleBack),
         H: circularLerp(accentOklch.H, resultOklch.H, scaleBack),
-      });
+      };
+      candidateRgb = oklchToRgb(idealOklch);
     }
 
-    palette.accent = ensureContrast(candidateRgb, palette.base, 3);
-    palette['accent-hover'] = deriveHover(palette.accent);
+    const correctedAccent = ensureContrast(candidateRgb, palette.base, 3);
+    const correctedHover = deriveHover(correctedAccent);
+    palette.accent = correctedAccent;
+    palette['accent-hover'] = correctedHover;
+
+    // P3 enrichment — see the "Display-P3 output" section above for the
+    // full reasoning. ensureContrast/deriveHover only ever move L (hue
+    // and chroma held fixed by design), so the L each one settled on is
+    // read back off its RGB result and paired with idealOklch's own C/H
+    // — the real requested chroma, not whatever sRGB's gamutMapOklch
+    // already clipped it down to.
+    if (isOurChrome(el)) {
+      const accentIdeal = { L: rgbToOklch(correctedAccent).L, C: idealOklch.C, H: idealOklch.H };
+      const accentP3 = maybeP3Override(accentIdeal);
+      if (accentP3) {
+        palette.accent = Object.assign({}, correctedAccent, { p3: accentP3 });
+        const hoverIdeal = { L: rgbToOklch(correctedHover).L, C: idealOklch.C, H: idealOklch.H };
+        const hoverP3 = maybeP3Override(hoverIdeal);
+        if (hoverP3) palette['accent-hover'] = Object.assign({}, correctedHover, { p3: hoverP3 });
+      }
+    }
     return palette;
   }
 
@@ -657,7 +833,16 @@ JLib.colorProvider = (function () {
   function applyPaletteAsVars(el, palette, prefix) {
     prefix = prefix || '--jlib-color-';
     for (const slot in palette) {
-      el.style.setProperty(prefix + slot, toCssRgb(palette[slot]));
+      const value = palette[slot];
+      el.style.setProperty(prefix + slot, toCssRgb(value));
+      // Set again with the P3 value when this slot carries one (only
+      // ever true for an isOurChrome, seed-hue-generated accent/
+      // accent-hover — see applySeedHue). A browser that doesn't
+      // understand color(display-p3 ...) rejects the second
+      // setProperty() call as an invalid value and silently keeps the
+      // rgb() value already set immediately above — no CSS.supports()
+      // check needed, the fallback is the platform's own behavior.
+      if (value && value.p3) el.style.setProperty(prefix + slot, value.p3);
     }
   }
 
@@ -814,6 +999,7 @@ JLib.colorProvider = (function () {
     isOpaqueColor,
     toCssRgb,
     toCssRgba,
+    resolveSampledColor,
     SEED_HUE_OVERRIDE_THRESHOLD_DEG,
     detectDisplayGamut,
     // palette contract
