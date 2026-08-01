@@ -500,11 +500,6 @@ JLib.colorProvider = (function () {
     return JLib.dedupe.memoSync(el, () => resolveAnchorBoundaryUncached(el), 4);
   }
 
-  // Samples base/ink from the boundary itself, accent from a small,
-  // frequency-weighted scan of nearby interactive elements — not
-  // single-highest-saturation-wins (which lets one loud outlier hijack the
-  // whole palette), but the most saturation-weighted-by-occurrence color
-  // among what's actually there.
   // ==========================================================================
   // Sampling fidelity — bucket 1 vs. buckets 2/3
   // ==========================================================================
@@ -551,11 +546,158 @@ JLib.colorProvider = (function () {
     return isOurs ? parseRgb(cssColorString) : simulateRenderedColor(cssColorString);
   }
 
-  function sampleAnchor(boundaryEl) {
-    const boundaryStyles = getComputedStyle(boundaryEl);
-    const base = isOpaqueColor(boundaryStyles.backgroundColor) ? resolveSampledColor(boundaryStyles.backgroundColor, boundaryEl) : DEFAULT_PALETTE.base;
-    const ink = isOpaqueColor(boundaryStyles.color) ? resolveSampledColor(boundaryStyles.color, boundaryEl) : relativeLuminance(base) < 0.5 ? { r: 255, g: 255, b: 255 } : { r: 0, g: 0, b: 0 };
+  // ==========================================================================
+  // Accent discovery — BM25-ranked candidate scan
+  // ==========================================================================
+  // Upgrades the accent-detection half of sampleAnchor's job specifically
+  // (base/ink stay direct boundary reads, unaffected — they were never
+  // candidate-scan-based to begin with). Steps 1-4 of the full sampling
+  // pipeline design, applied to accent: capture+rank via JLib.heuristics
+  // (real BM25 against a color-relevant keyword query), then a second
+  // capture (getComputedStyle on survivors only) + validity filter, all
+  // inside ONE JLib.heuristics.withScrollLock() call spanning the whole
+  // sequence — heuristics.js's capture()/rank() don't lock internally
+  // specifically so a caller chaining further reads can protect the
+  // whole span in one call; this is that caller.
+  //
+  // Graceful degrade, not a hard dependency: if JLib.heuristics isn't
+  // loaded (an older bundle, or an author who only @requires the parts
+  // they need), discoverAccent() returns null and sampleAnchor falls
+  // back to the original hue-bucket-only scan below — same "shortcut,
+  // never a requirement" principle this codebase already holds
+  // everywhere else.
+  const ACCENT_QUERY_KEYWORDS = ['accent', 'brand', 'primary', 'secondary', 'nav', 'header', 'logo', 'masthead', 'toolbar', 'cta'];
 
+  // Lightness-extreme floor/ceiling for the validity gate below — no
+  // existing shipped threshold to inherit for this specifically
+  // (ensureContrast steps TOWARD a contrast target, it doesn't reject
+  // extremes outright on its own), so these are new values, same shape
+  // as the chroma floor already trusted elsewhere in this file (0.03,
+  // reused unchanged below) but not yet empirically tuned the way that
+  // one has been through real-site testing.
+  const ACCENT_LIGHTNESS_FLOOR = 0.08;
+  const ACCENT_LIGHTNESS_CEILING = 0.95;
+  const ACCENT_MIN_VISIBLE_SIZE_PX = 4;
+
+  // isElementVisible(el) — a real rendering check, not just "exists in
+  // the DOM." A candidate can have perfect semantic naming and still be
+  // display:none, zero-size, or fully transparent; its color shouldn't
+  // count toward the vote if nothing actually renders it.
+  function isElementVisible(el) {
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden' || parseFloat(cs.opacity) === 0) return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width >= ACCENT_MIN_VISIBLE_SIZE_PX && rect.height >= ACCENT_MIN_VISIBLE_SIZE_PX;
+  }
+
+  // isAccentColorValid(rgb) — same chroma floor sampleAnchor's original
+  // scan already used (0.03), plus the new lightness-extreme gate.
+  function isAccentColorValid(rgb) {
+    const oklch = rgbToOklch(rgb);
+    if (oklch.C < 0.03) return false;
+    if (oklch.L < ACCENT_LIGHTNESS_FLOOR || oklch.L > ACCENT_LIGHTNESS_CEILING) return false;
+    return true;
+  }
+
+  // accentColorStrength(rgb, base) — continuous score for a color that
+  // already passed isAccentColorValid: how much real headroom it has,
+  // not just whether it clears the floor. Chroma (already floor-gated,
+  // so raw value is a fine proxy for "how vivid") plus contrast against
+  // the anchor's own base (more contrast against the real background
+  // suggests a deliberately visible UI element, not incidental text
+  // color). Deliberately NOT BM25 — this is continuous numeric math
+  // over color properties, a different problem shape than text
+  // relevance, not a rerun of the same algorithm for a different input.
+  function accentColorStrength(rgb, base) {
+    const oklch = rgbToOklch(rgb);
+    const contrast = base ? contrastRatio(rgb, base) : 1;
+    return oklch.C * 2 + Math.log(1 + contrast);
+  }
+
+  // normalize(values) -> same-length array, each entry rescaled to
+  // 0-1 (min-max). BM25 scores and accentColorStrength scores live on
+  // completely different scales — this is what makes combining them
+  // into one weighted sum meaningful instead of one silently dominating
+  // purely because its raw numbers happen to be bigger.
+  function normalize(values) {
+    if (values.length === 0) return [];
+    const max = Math.max(...values), min = Math.min(...values);
+    if (max === min) return values.map(() => 1);
+    return values.map((v) => (v - min) / (max - min));
+  }
+
+  // discoverAccent(boundaryEl, base) -> rgb | null. See file section
+  // comment above for the full design. Combined weighting (BM25
+  // relevance 50% / color strength 50%) is a reasonable, defensible
+  // starting point, NOT an empirically-tuned value — flagged here
+  // explicitly rather than presented as settled, same honesty standard
+  // as the lightness-extreme thresholds above.
+  const BM25_WEIGHT = 0.5;
+  const COLOR_STRENGTH_WEIGHT = 0.5;
+
+  function discoverAccent(boundaryEl, base) {
+    if (!JLib.heuristics) return null;
+
+    return JLib.heuristics.withScrollLock(() => {
+      const ranked = JLib.heuristics.captureAndRank(ACCENT_QUERY_KEYWORDS, boundaryEl);
+      if (ranked.length === 0) return null;
+
+      const votes = []; // { rgb, bm25, strength }
+      for (const candidate of ranked) {
+        if (!isElementVisible(candidate.el)) continue;
+        const cs = getComputedStyle(candidate.el);
+        const propStrings = [cs.backgroundColor, cs.borderColor, cs.color, cs.caretColor];
+        for (const str of propStrings) {
+          if (!isOpaqueColor(str)) continue;
+          const rgb = resolveSampledColor(str, candidate.el);
+          if (!rgb || !isAccentColorValid(rgb)) continue;
+          votes.push({ rgb, bm25: candidate.score, strength: accentColorStrength(rgb, base) });
+        }
+      }
+      if (votes.length === 0) return null;
+
+      const bm25Norm = normalize(votes.map((v) => v.bm25));
+      const strengthNorm = normalize(votes.map((v) => v.strength));
+      votes.forEach((v, i) => {
+        v.weight = bm25Norm[i] * BM25_WEIGHT + strengthNorm[i] * COLOR_STRENGTH_WEIGHT;
+      });
+
+      // Same hue-bucket grouping shape as the original scan below,
+      // weighted by the new combined score instead of raw count*chroma
+      // — repeated agreement across multiple candidates/properties on
+      // the same real hue still reinforces confidence, exactly the
+      // same principle, just weighted by richer signal now.
+      const buckets = new Map();
+      votes.forEach((v) => {
+        const oklch = rgbToOklch(v.rgb);
+        const bucket = Math.round(oklch.H / 15) * 15;
+        const entry = buckets.get(bucket) || { totalWeight: 0, sample: v.rgb, bestWeight: 0 };
+        entry.totalWeight += v.weight;
+        if (v.weight > entry.bestWeight) {
+          entry.bestWeight = v.weight;
+          entry.sample = v.rgb;
+        }
+        buckets.set(bucket, entry);
+      });
+
+      let best = null;
+      let bestScore = 0;
+      buckets.forEach((entry) => {
+        if (entry.totalWeight > bestScore) {
+          bestScore = entry.totalWeight;
+          best = entry.sample;
+        }
+      });
+      return best;
+    });
+  }
+
+  // legacyAccentScan(boundaryEl) -> rgb | null. The original hue-bucket-
+  // only scan, unchanged — kept as the fallback path for when
+  // JLib.heuristics isn't loaded (an older bundle, or an author who
+  // only @requires the parts they need) or discoverAccent() found
+  // nothing usable.
+  function legacyAccentScan(boundaryEl) {
     const candidates = Array.prototype.slice.call(boundaryEl.querySelectorAll('button, a, [role="button"]')).slice(0, 30);
     const buckets = new Map(); // rounded-hue-bucket -> { count, sample }
     candidates.forEach((node) => {
@@ -584,7 +726,20 @@ JLib.colorProvider = (function () {
         accent = entry.sample;
       }
     });
-    if (!accent) accent = ink;
+    return accent;
+  }
+
+  function sampleAnchor(boundaryEl) {
+    const boundaryStyles = getComputedStyle(boundaryEl);
+    const base = isOpaqueColor(boundaryStyles.backgroundColor) ? resolveSampledColor(boundaryStyles.backgroundColor, boundaryEl) : DEFAULT_PALETTE.base;
+    const ink = isOpaqueColor(boundaryStyles.color) ? resolveSampledColor(boundaryStyles.color, boundaryEl) : relativeLuminance(base) < 0.5 ? { r: 255, g: 255, b: 255 } : { r: 0, g: 0, b: 0 };
+
+    // discoverAccent (BM25 + color-strength, via JLib.heuristics) is the
+    // preferred path; legacyAccentScan is the fallback if heuristics.js
+    // isn't loaded or discovery found nothing usable. Never nothing —
+    // ink is the last-resort floor, same "must provide" guarantee this
+    // slot has always had.
+    const accent = discoverAccent(boundaryEl, base) || legacyAccentScan(boundaryEl) || ink;
 
     return { base, ink, accent, muted: mixTowardBg(ink, base, 0.4), surface: mixTowardBg(base, ink, 0.06), elevated: mixTowardBg(base, ink, 0.12) };
   }
