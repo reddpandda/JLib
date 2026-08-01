@@ -944,7 +944,31 @@ JLib.colorProvider = (function () {
       el.insertBefore(overlay, el.firstChild);
     }
 
+    // Cleanup shared by both the normal completion path and the
+    // disconnected-element bailout below — an inserted overlay and a
+    // temporarily-forced position:relative both need to be undone
+    // exactly once, regardless of which path gets there.
+    function cleanup() {
+      if (overlay) overlay.remove();
+      if (restorePosition) restorePosition();
+    }
+
     function frame(now) {
+      // requestAnimationFrame is fully SUSPENDED (not just throttled)
+      // for hidden/backgrounded tabs. If `el` gets removed from the
+      // document by the page's own re-render mid-transition, and the
+      // tab is backgrounded before this naturally reaches t>=1, this
+      // closure (plus any inserted overlay) would otherwise sit alive
+      // in memory for as long as the tab stays backgrounded, since
+      // nothing would call frame() again to reach the normal cleanup
+      // path. Checking on every frame means the very next time frame()
+      // DOES run — even much later, whenever the tab is foregrounded
+      // again — it tears down immediately instead of waiting out
+      // whatever's left of `duration`.
+      if (!document.contains(el)) {
+        cleanup();
+        return;
+      }
       const t = Math.min(1, (now - start) / duration);
       const et = ease(t);
       for (const slot in toPalette) {
@@ -956,9 +980,8 @@ JLib.colorProvider = (function () {
       if (overlay) overlay.style.opacity = String(Math.max(0, 1 - et));
       if (t < 1) {
         requestAnimationFrame(frame);
-      } else if (overlay) {
-        overlay.remove();
-        if (restorePosition) restorePosition();
+      } else {
+        cleanup();
       }
     }
     requestAnimationFrame(frame);
@@ -1018,16 +1041,18 @@ JLib.colorProvider = (function () {
   }
 
   return {
-    // math, exposed for consumers that need it directly (theme.js does)
-    rgbToOklch,
-    oklchToRgb,
-    perceptualDistance,
-    hueDistance,
+    // Public API surface, deliberately narrower than the full set of
+    // functions this module defines internally. rgbToOklch, oklchToRgb,
+    // perceptualDistance, hueDistance, parseRgb, and isOpaqueColor all
+    // used to be exported under a comment claiming "theme.js does" need
+    // direct access to them — checked against theme.js's actual calls
+    // and every other consumer in this codebase; none of them do. Kept
+    // as internal-only (still reachable via closure by everything in
+    // this file that needs them) rather than continuing to leak as
+    // public API with no real caller.
     relativeLuminance,
     contrastRatio,
     ensureContrast,
-    parseRgb,
-    isOpaqueColor,
     toCssRgb,
     toCssRgba,
     resolveSampledColor,
