@@ -2,9 +2,7 @@
 // services/heuristics.js
 // ============================================================================
 /*
- * heuristics — provider-agnostic discovery engine. Two jobs, meant to
- * run together as one uninterrupted synchronous call from a caller's
- * point of view (see capture()'s own comment for why that matters):
+ * heuristics — provider-agnostic discovery engine.
  *
  *   capture(rootEl?) -> raw per-element data (tag, class list, every
  *     attribute name/value) for every element under rootEl (default
@@ -16,6 +14,12 @@
  *     search engines — properly tokenized, corpus-derived stopwords,
  *     length-normalized), sorted descending, zero-score entries
  *     dropped.
+ *
+ *   withScrollLock(fn) -> runs fn() while a real, native, invisible
+ *     modal dialog blocks all input to the page. See its own comment
+ *     for exactly what this protects against and why it's a separate
+ *     exposed utility rather than something capture()/rank() apply
+ *     internally.
  *
  * Nothing here knows what the keywords MEAN — a provider supplies its
  * own query (colorProvider's is accent/brand/primary/nav/..., a
@@ -43,6 +47,76 @@ JLib.heuristics = (function () {
       .filter(Boolean);
   }
 
+  // withScrollLock(fn) — runs fn() while scroll/click/keyboard input to
+  // the real page is genuinely blocked at the platform level, via a
+  // real, invisible, native <dialog> opened with showModal().
+  //
+  // The specific danger this exists for: on plenty of real SPAs, a
+  // scroll doesn't just move the native viewport — it drives a custom
+  // scrollbar/virtualized-list implementation that reacts to wheel/
+  // touch input in its own JS handler and swaps out DOM nodes
+  // (recycling element references for entirely different content) as
+  // part of that reaction. If that happens between when a candidate
+  // element's identity is captured and when its live state (computed
+  // style, geometry) is read later, the color/value read back can get
+  // silently misattributed to the wrong logical content — a real,
+  // serious correctness bug, not just visual jank.
+  //
+  // Keeping the whole capture-through-read span synchronous (no
+  // `await`, no requestAnimationFrame yield in between) is NOT a
+  // sufficient fix on its own, even though it blocks the equivalent
+  // danger from *native* browser scroll (native scroll dispatch
+  // genuinely cannot interleave with synchronous JS execution). A
+  // custom scroll library isn't bound by that same guarantee — it can
+  // react to input in the same handler, same tick, the instant a wheel
+  // event arrives, with no dependency on our own execution reaching a
+  // yield point at all. And relying on "nothing in this span ever
+  // yields" as the actual safety mechanism is fragile forever, not just
+  // today — a single future change anywhere in a caller's chain that
+  // innocently introduces an await would silently reopen the exact
+  // hole, with nothing to catch the regression. A real native modal
+  // backdrop blocking input before it reaches ANY JS handler — custom
+  // or native — doesn't depend on that invariant being maintained.
+  //
+  // Deliberately does NOT set pointer-events:none on the dialog itself
+  // — confirmed via direct testing (document.elementFromPoint against
+  // a real page, before/during/after the dialog) that doing so defeats
+  // the dialog's own input-blocking behavior: a naive first version
+  // with pointer-events:none set resolved elementFromPoint straight
+  // through to the underlying page's own content even while the
+  // "modal" was open. The corrected version (full-viewport sizing,
+  // opacity:0 for invisibility only, no pointer-events override)
+  // resolves elementFromPoint to the dialog itself for as long as it's
+  // open, confirmed the same way.
+  //
+  // Not applied automatically inside capture()/rank() — this file only
+  // owns Steps 1-2 of a larger pipeline; the real span that needs
+  // protecting extends through whatever later reads (getComputedStyle,
+  // geometry) a provider's own Steps 3+ perform, which this file has no
+  // visibility into. A caller chaining further reads after rank()
+  // should wrap its ENTIRE capture-through-read sequence in one
+  // withScrollLock() call, not rely on something inside capture()
+  // that can't see past its own two steps.
+  function withScrollLock(fn) {
+    const dialog = document.createElement('dialog');
+    dialog.setAttribute(
+      'style',
+      'opacity:0;position:fixed;inset:0;width:100vw;height:100vh;padding:0;border:none;margin:0;max-width:none;max-height:none;background:transparent;'
+    );
+    document.body.appendChild(dialog);
+    const activeBefore = document.activeElement;
+    let result;
+    try {
+      dialog.showModal();
+      result = fn();
+    } finally {
+      dialog.close();
+      dialog.remove();
+      if (activeBefore && typeof activeBefore.focus === 'function') activeBefore.focus();
+    }
+    return result;
+  }
+
   // capture(rootEl?) -> [{ el, tag, raw }], one entry per element under
   // rootEl (default document). `raw` is every class name plus every
   // attribute name and value, as plain strings — tokenization happens
@@ -50,19 +124,9 @@ JLib.heuristics = (function () {
   // wants the raw strings without paying tokenization cost it doesn't
   // need.
   //
-  // Deliberately no getComputedStyle and no scroll-lock mechanism here.
-  // The DOM-identity danger a scroll-lock would guard against (a
-  // virtualized list recycling an element reference between when we
-  // capture its identity and when a later step reads its rendered
-  // state) only exists if there's a real async gap for a scroll-
-  // triggered re-render to land in. capture() itself is one
-  // synchronous loop — nothing else can execute mid-loop, by the
-  // platform's own single-threaded guarantee — and callers are
-  // expected to keep whatever reads the captured elements' live state
-  // (computed style, geometry) in the SAME uninterrupted synchronous
-  // call, not deferred behind an await. Kept that way, there's no gap
-  // for the danger to occur in at all, without needing to lock
-  // anything.
+  // No lock applied internally — see withScrollLock's own comment for
+  // why that responsibility belongs to whoever owns the full span
+  // being protected, not to this function alone.
   function capture(rootEl) {
     rootEl = rootEl || document;
     const out = [];
@@ -153,9 +217,15 @@ JLib.heuristics = (function () {
 
   // captureAndRank(keywords, rootEl?) — Steps 1+2 in one call, the
   // common case for a provider that just wants a ranked shortlist.
+  // Does NOT include a scroll lock. If a caller stops here, wrap this
+  // call in withScrollLock() directly; if a caller chains further
+  // reads (getComputedStyle, geometry) afterward, wrap the WHOLE chain
+  // — this call plus those later reads — in one withScrollLock() call
+  // instead, since the real span needing protection extends past what
+  // this function alone can see.
   function captureAndRank(keywords, rootEl) {
     return rank(capture(rootEl), keywords);
   }
 
-  return { tokenize, capture, rank, captureAndRank };
+  return { tokenize, capture, rank, captureAndRank, withScrollLock };
 })();
