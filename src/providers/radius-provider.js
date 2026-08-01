@@ -9,7 +9,7 @@
  * result.
  *
  * Depends on: JLib.colorProvider (anchor resolution), JLib.utils
- * (_jlibSampleStructuralValue)
+ * (JLib.utils.sampleStructuralValue)
  */
 var JLib = typeof JLib !== 'undefined' ? JLib : {};
 
@@ -19,7 +19,7 @@ JLib.radiusProvider = (function () {
   let cache = new WeakMap();
 
   function sampleRadius(boundaryEl) {
-    const found = _jlibSampleStructuralValue(
+    const found = JLib.utils.sampleStructuralValue(
       boundaryEl,
       (node) => getComputedStyle(node).borderRadius,
       (val) => val && val !== '0px' && val !== '0px 0px 0px 0px'
