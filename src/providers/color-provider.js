@@ -413,6 +413,19 @@ JLib.colorProvider = (function () {
   // hand-rolling a second color parser. Created lazily, kept off-screen
   // and out of layout (display:none) so touching it repeatedly across
   // many candidates doesn't cause layout thrash.
+  //
+  // Resets to '' before every assignment, then checks the raw
+  // (specified, not computed) style value immediately after — setting
+  // an unparseable CSS color value is a silent no-op at the platform
+  // level (confirmed: both real browsers and jsdom simply refuse to
+  // apply it), so without the reset, an invalid `val` would silently
+  // leave whatever the PREVIOUS successful resolution left on this
+  // shared probe, and getComputedStyle would report that stale value
+  // as if it were a valid resolution of the current, actually-invalid
+  // input. Checking the raw specified value (not computed) after
+  // assignment is what makes this detectable at all — computed style
+  // always reports SOME value (inherited/default) even when the
+  // specified value was rejected.
   let colorProbe = null;
   function resolveColorValue(val) {
     if (!colorProbe) {
@@ -420,7 +433,9 @@ JLib.colorProvider = (function () {
       colorProbe.style.display = 'none';
       document.body.appendChild(colorProbe);
     }
+    colorProbe.style.color = '';
     colorProbe.style.color = val;
+    if (colorProbe.style.color === '') return null; // platform refused to parse val at all
     return getComputedStyle(colorProbe).color;
   }
 
@@ -1195,6 +1210,225 @@ JLib.colorProvider = (function () {
     return cachedGamut;
   }
 
+  // ==========================================================================
+  // External sources — manifest theme_color, favicon extraction, meta
+  // theme-color
+  // ==========================================================================
+  // Deliberately NOT part of getPalette()'s synchronous pipeline.
+  // Manifest/favicon lookups are real network requests; getPalette()
+  // has always returned synchronously and every existing consumer
+  // (superProvider, theme.js, reveal()) depends on that. Turning
+  // getPalette() itself async would be a breaking change with no
+  // evidence it's needed. Instead this is a separate, explicit,
+  // opt-in layer — a caller awaits enrichWithExternalSources()
+  // themselves, after already having a real, usable, synchronously-
+  // obtained palette. "Shortcut, never a requirement," same as
+  // everywhere else in this file.
+
+  // resolveExternalColorString(str) -> rgb | null. manifest.json's
+  // theme_color and <meta name="theme-color">'s content are both
+  // author-supplied strings with zero format guarantee — the field
+  // EXISTING is not the same claim as it CONTAINING a valid color.
+  // Routed through the same resolveColorValue() probe already built
+  // for CSS custom property values, not a second hand-rolled parser.
+  function resolveExternalColorString(str) {
+    if (!str) return null;
+    const resolved = resolveColorValue(str);
+    return isOpaqueColor(resolved) ? parseRgb(resolved) : null;
+  }
+
+  // fetchManifestThemeColor() -> Promise<rgb|null>.
+  async function fetchManifestThemeColor() {
+    const link = document.querySelector('link[rel="manifest"]');
+    if (!link) return null;
+    try {
+      const resp = await fetch(link.href);
+      const json = await resp.json();
+      return resolveExternalColorString(json.theme_color);
+    } catch (e) {
+      return null; // network failure, invalid JSON, CORS — fail closed, never fatal to the rest of the pipeline
+    }
+  }
+
+  // readMetaThemeColor() -> rgb | null. Synchronous (no network), but
+  // shaped to fit the same Promise.all batch as the other two sources
+  // in enrichWithExternalSources below.
+  function readMetaThemeColor() {
+    const meta = document.querySelector('meta[name="theme-color"]');
+    return meta ? resolveExternalColorString(meta.getAttribute('content')) : null;
+  }
+
+  // hueBucketDominantColor(pixels) -> rgb | null. Same hue-bucketed
+  // grouping already used for real DOM-sampled colors elsewhere in
+  // this file, applied to image pixel data instead — NOT a naive
+  // full-image average, which produces a washed-out, unrepresentative
+  // "muddy midpoint" on any multi-color logo (confirmed real, not
+  // hypothetical, on a real multi-color brand mark). Returns null when
+  // every pixel is near-neutral — a genuinely achromatic icon (a
+  // black/white/gray logo) correctly yields no color rather than a
+  // forced, meaningless one.
+  function hueBucketDominantColor(pixels) {
+    const buckets = new Map();
+    for (let i = 0; i < pixels.length; i++) {
+      const rgb = { r: pixels[i][0], g: pixels[i][1], b: pixels[i][2] };
+      const oklch = rgbToOklch(rgb);
+      if (oklch.C < 0.03) continue;
+      const bucket = Math.round(oklch.H / 15) * 15;
+      const entry = buckets.get(bucket) || { count: 0, sumR: 0, sumG: 0, sumB: 0 };
+      entry.count += 1;
+      entry.sumR += rgb.r;
+      entry.sumG += rgb.g;
+      entry.sumB += rgb.b;
+      buckets.set(bucket, entry);
+    }
+    let best = null;
+    let bestCount = 0;
+    buckets.forEach((entry) => {
+      if (entry.count > bestCount) {
+        bestCount = entry.count;
+        best = { r: Math.round(entry.sumR / entry.count), g: Math.round(entry.sumG / entry.count), b: Math.round(entry.sumB / entry.count) };
+      }
+    });
+    return best;
+  }
+
+  // loadImagePixels(url) -> Promise<[[r,g,b],...] | null>. Fails
+  // closed on any real-world failure mode: load timeout, onerror, or a
+  // CORS-tainted canvas throwing on getImageData — all resolve to
+  // null rather than rejecting, so Promise.all in
+  // enrichWithExternalSources below never needs a .catch per source.
+  function loadImagePixels(url) {
+    return new Promise((resolve) => {
+      if (!url) return resolve(null);
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      const timeout = setTimeout(() => resolve(null), 4000);
+      img.onload = () => {
+        clearTimeout(timeout);
+        try {
+          const canvas = document.createElement('canvas');
+          canvas.width = 32;
+          canvas.height = 32;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, 32, 32);
+          const data = ctx.getImageData(0, 0, 32, 32).data;
+          const pixels = [];
+          for (let i = 0; i < data.length; i += 4) {
+            if (data[i + 3] < 50) continue; // skip near-transparent pixels
+            pixels.push([data[i], data[i + 1], data[i + 2]]);
+          }
+          resolve(pixels);
+        } catch (e) {
+          resolve(null); // CORS-tainted canvas or other failure
+        }
+      };
+      img.onerror = () => {
+        clearTimeout(timeout);
+        resolve(null);
+      };
+      img.src = url;
+    });
+  }
+
+  // fetchFaviconColor() -> Promise<rgb|null>. Tries the best declared
+  // icon first (apple-touch-icon preferred — confirmed higher fidelity
+  // than a plain .ico in real testing), then falls back to the
+  // implicit same-origin /favicon.ico convention if that fails —
+  // confirmed empirically this rescues sites where the DECLARED icon
+  // is CORS-blocked but the implicit same-origin one isn't, since it
+  // never crosses an origin boundary.
+  async function fetchFaviconColor() {
+    const declaredLink =
+      document.querySelector('link[rel="apple-touch-icon"]') || document.querySelector('link[rel="icon"]') || document.querySelector('link[rel="shortcut icon"]');
+    const declaredUrl = declaredLink ? declaredLink.href : null;
+    const implicitUrl = location.origin + '/favicon.ico';
+
+    let pixels = await loadImagePixels(declaredUrl);
+    if (!pixels || pixels.length === 0) pixels = await loadImagePixels(implicitUrl);
+    if (!pixels || pixels.length === 0) return null;
+
+    const dominant = hueBucketDominantColor(pixels);
+    if (!dominant || !isAccentColorValid(dominant)) return null;
+    return dominant;
+  }
+
+  // Perceptual-distance threshold below which an external color is
+  // treated as confirming/reinforcing a specific palette slot, rather
+  // than being unrelated to it. Not yet empirically tuned — same
+  // honesty flag as the accent-discovery thresholds above.
+  const EXTERNAL_SLOT_AGREEMENT_THRESHOLD = 0.15;
+
+  // reconcileExternalSlot(externalRgb, base, accent) -> 'base' |
+  // 'accent' | null. Never assumes a fixed slot — a manifest/favicon
+  // color genuinely isn't always "the accent" (confirmed on a real
+  // site: Spotify's manifest theme_color is its near-black background,
+  // not its green). Decided purely by which of the DOM pipeline's own
+  // results it's actually closer to.
+  function reconcileExternalSlot(externalRgb, base, accent) {
+    const distToBase = perceptualDistance(externalRgb, base);
+    const distToAccent = perceptualDistance(externalRgb, accent);
+    if (distToBase <= EXTERNAL_SLOT_AGREEMENT_THRESHOLD && distToBase <= distToAccent) return 'base';
+    if (distToAccent <= EXTERNAL_SLOT_AGREEMENT_THRESHOLD) return 'accent';
+    return null; // doesn't clearly agree with either — genuine new information, not blended in without stronger evidence
+  }
+
+  // Chroma below which the DOM-derived accent counts as weak evidence
+  // (the discovery pipeline found nothing genuinely vivid — including
+  // the "fell all the way back to ink" case, which this also covers
+  // without needing to specifically detect that exact fallback path).
+  // A real, deliberately-styled UI accent typically clears this by a
+  // real margin.
+  const DOM_ACCENT_WEAK_CHROMA = 0.05;
+
+  // enrichWithExternalSources(palette, boundaryEl) -> Promise<palette>.
+  // Fetches all three sources in parallel (independent network
+  // operations, no reason to serialize), reconciles each against the
+  // ALREADY-VALIDATED palette's own base/accent, and either:
+  //   - modestly nudges the matching slot toward it (agreement — the
+  //     DOM-derived value already passed BM25 relevance + visibility +
+  //     validity gates, real multi-stage evidence an external source
+  //     hasn't been checked against, so this reinforces rather than
+  //     replaces it),
+  //   - leaves the palette untouched (no clear agreement with either
+  //     slot — genuine new information the DOM pipeline didn't
+  //     confirm, deliberately not forced in), or
+  //   - adopts the external color outright ONLY when the DOM pipeline
+  //     itself found essentially nothing (weak/near-floor accent
+  //     chroma) — validated external evidence beats no real signal.
+  // High-trust sources (manifest, favicon) are always considered
+  // first; the low-trust meta tag is only considered at all if BOTH
+  // high-trust sources found nothing, given it was confirmed
+  // misleading (browser-chrome background, not brand color) on real
+  // sites during testing, not merely silent.
+  async function enrichWithExternalSources(palette, boundaryEl) {
+    boundaryEl = boundaryEl || document.body;
+    const [manifestColor, faviconColor, metaColor] = await Promise.all([fetchManifestThemeColor(), fetchFaviconColor(), Promise.resolve(readMetaThemeColor())]);
+
+    const highTrust = [manifestColor, faviconColor].filter(Boolean);
+    const candidates = highTrust.length > 0 ? highTrust : [metaColor].filter(Boolean);
+    if (candidates.length === 0) return palette;
+
+    const enriched = Object.assign({}, palette);
+    let accentReinforced = false;
+
+    candidates.forEach((externalRgb) => {
+      const slot = reconcileExternalSlot(externalRgb, enriched.base, enriched.accent);
+      if (slot === 'accent' && !accentReinforced) {
+        enriched.accent = mixTowardBg(enriched.accent, externalRgb, 0.3);
+        accentReinforced = true;
+      } else if (slot === 'base') {
+        enriched.base = mixTowardBg(enriched.base, externalRgb, 0.2); // lighter nudge — base already came from a direct, reliable boundary read
+      }
+    });
+
+    const domAccentChroma = rgbToOklch(palette.accent).C;
+    if (domAccentChroma < DOM_ACCENT_WEAK_CHROMA) {
+      enriched.accent = candidates[0];
+    }
+
+    return validate(enriched); // re-run through the one door — contrast correction and hover derivation still apply to the enriched result
+  }
+
   return {
     // Public API surface, deliberately narrower than the full set of
     // functions this module defines internally. rgbToOklch, oklchToRgb,
@@ -1230,5 +1464,7 @@ JLib.colorProvider = (function () {
     reveal,
     revealAnchored,
     applyPaletteAsVars,
+    // external sources (optional async enrichment layer)
+    enrichWithExternalSources,
   };
 })();
