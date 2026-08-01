@@ -641,32 +641,33 @@ JLib.colorProvider = (function () {
     return values.map((v) => (v - min) / (max - min));
   }
 
-  // discoverAccent(boundaryEl, base) -> rgb | null. See file section
-  // comment above for the full design. Combined weighting (BM25
-  // relevance 50% / color strength 50%) is a reasonable, defensible
-  // starting point, NOT an empirically-tuned value — flagged here
-  // explicitly rather than presented as settled, same honesty standard
-  // as the lightness-extreme thresholds above.
-  const BM25_WEIGHT = 0.5;
-  const COLOR_STRENGTH_WEIGHT = 0.5;
-
-  function discoverAccent(boundaryEl, base) {
+  // buildAccentVoteBuckets(boundaryEl, base) -> Map<hueBucket, entry> |
+  // null. Shared internal helper — the actual capture+rank+vote work,
+  // used by both discoverAccent (picks a single winning color, the
+  // original external contract) and discoverAccentCandidates (needs
+  // the full winner+runner-up list with their source elements and
+  // which property won, for Step 6's shortlist). Extracted rather than
+  // duplicated so both stay exactly in sync with the same underlying
+  // vote.
+  function buildAccentVoteBuckets(boundaryEl, base) {
     if (!JLib.heuristics) return null;
 
     return JLib.heuristics.withScrollLock(() => {
       const ranked = JLib.heuristics.captureAndRank(ACCENT_QUERY_KEYWORDS, boundaryEl);
       if (ranked.length === 0) return null;
 
-      const votes = []; // { rgb, bm25, strength }
+      const propNames = ['backgroundColor', 'borderColor', 'color', 'caretColor'];
+      const votes = []; // { rgb, bm25, strength, el, property }
       for (const candidate of ranked) {
         if (!isElementVisible(candidate.el)) continue;
         const cs = getComputedStyle(candidate.el);
         const propStrings = [cs.backgroundColor, cs.borderColor, cs.color, cs.caretColor];
-        for (const str of propStrings) {
+        for (let p = 0; p < propStrings.length; p++) {
+          const str = propStrings[p];
           if (!isOpaqueColor(str)) continue;
           const rgb = resolveSampledColor(str, candidate.el);
           if (!rgb || !isAccentColorValid(rgb)) continue;
-          votes.push({ rgb, bm25: candidate.score, strength: accentColorStrength(rgb, base) });
+          votes.push({ rgb, bm25: candidate.score, strength: accentColorStrength(rgb, base), el: candidate.el, property: propNames[p] });
         }
       }
       if (votes.length === 0) return null;
@@ -677,34 +678,63 @@ JLib.colorProvider = (function () {
         v.weight = bm25Norm[i] * BM25_WEIGHT + strengthNorm[i] * COLOR_STRENGTH_WEIGHT;
       });
 
-      // Same hue-bucket grouping shape as the original scan below,
-      // weighted by the new combined score instead of raw count*chroma
-      // — repeated agreement across multiple candidates/properties on
-      // the same real hue still reinforces confidence, exactly the
-      // same principle, just weighted by richer signal now.
+      // Hue-bucket grouping — repeated agreement across multiple
+      // candidates/properties on the same real hue reinforces
+      // confidence, same principle as legacyAccentScan below, just
+      // weighted by the richer combined score now.
       const buckets = new Map();
       votes.forEach((v) => {
         const oklch = rgbToOklch(v.rgb);
         const bucket = Math.round(oklch.H / 15) * 15;
-        const entry = buckets.get(bucket) || { totalWeight: 0, sample: v.rgb, bestWeight: 0 };
+        const entry = buckets.get(bucket) || { totalWeight: 0, sample: v.rgb, bestWeight: 0, el: v.el, property: v.property };
         entry.totalWeight += v.weight;
         if (v.weight > entry.bestWeight) {
           entry.bestWeight = v.weight;
           entry.sample = v.rgb;
+          entry.el = v.el;
+          entry.property = v.property;
         }
         buckets.set(bucket, entry);
       });
 
-      let best = null;
-      let bestScore = 0;
-      buckets.forEach((entry) => {
-        if (entry.totalWeight > bestScore) {
-          bestScore = entry.totalWeight;
-          best = entry.sample;
-        }
-      });
-      return best;
+      return buckets;
     });
+  }
+
+  // discoverAccent(boundaryEl, base) -> rgb | null. See file section
+  // comment above for the full design. Combined weighting (BM25
+  // relevance 50% / color strength 50%) is a reasonable, defensible
+  // starting point, NOT an empirically-tuned value — flagged here
+  // explicitly rather than presented as settled, same honesty standard
+  // as the lightness-extreme thresholds above.
+  const BM25_WEIGHT = 0.5;
+  const COLOR_STRENGTH_WEIGHT = 0.5;
+
+  function discoverAccent(boundaryEl, base) {
+    const buckets = buildAccentVoteBuckets(boundaryEl, base);
+    if (!buckets) return null;
+    let best = null;
+    let bestScore = 0;
+    buckets.forEach((entry) => {
+      if (entry.totalWeight > bestScore) {
+        bestScore = entry.totalWeight;
+        best = entry.sample;
+      }
+    });
+    return best;
+  }
+
+  // discoverAccentCandidates(boundaryEl, base) -> [{ rgb, el, property
+  // }], sorted by totalWeight descending — winner first, then runner-
+  // ups. The richer form Step 6's shortlist needs: which real element
+  // (and which of its color properties) actually produced each
+  // candidate, not just the color value alone.
+  function discoverAccentCandidates(boundaryEl, base) {
+    const buckets = buildAccentVoteBuckets(boundaryEl, base);
+    if (!buckets) return [];
+    return Array.from(buckets.values())
+      .sort((a, b) => b.totalWeight - a.totalWeight)
+      .map((entry) => ({ rgb: entry.sample, el: entry.el, property: entry.property }));
   }
 
   // legacyAccentScan(boundaryEl) -> rgb | null. The original hue-bucket-
@@ -1429,6 +1459,175 @@ JLib.colorProvider = (function () {
     return validate(enriched); // re-run through the one door — contrast correction and hover derivation still apply to the enriched result
   }
 
+  // ==========================================================================
+  // Shortlist — persistent cache + drift-based revalidation
+  // ==========================================================================
+  // Deliberately NOT part of getPalette()'s synchronous pipeline, same
+  // reasoning as enrichWithExternalSources above — JLib.cache reads are
+  // real (if fast, IndexedDB-backed) async operations. A caller wanting
+  // this awaits it explicitly.
+  //
+  // Scoped to per-hostname, matching getGlobalPalette()'s existing
+  // granularity, not per-arbitrary-anchor — an arbitrary boundary
+  // element has no stable identity across a reload for THIS cache to
+  // key on either (that's exactly the problem the shortlist mechanism
+  // exists to solve for candidate ELEMENTS, not boundaries), so this
+  // is scoped to the same page-wide case getGlobalPalette already
+  // handles, not every getPalette(el) call.
+
+  // REBIND_ATTR_CANDIDATES — the real, confirmed conventions found
+  // across actual sites during this whole investigation (not a guess):
+  // Walmart's data-automation-id/data-testid, Netflix's data-uia,
+  // Hulu's data-automationid, Spotify's data-encore-id, LinkedIn's
+  // data-test-id. A candidate with none of these (and no id) has
+  // nothing reliable to rebind to after a reload and is deliberately
+  // not cached — a shaky selector match is worse than no cache entry
+  // at all.
+  const REBIND_ATTR_CANDIDATES = ['data-testid', 'data-test-id', 'data-qa', 'data-cy', 'data-uia', 'data-automation-id', 'data-automationid', 'data-encore-id'];
+
+  // deriveRebindSelector(el) -> selector string | null.
+  function deriveRebindSelector(el) {
+    if (el.id) return '#' + (window.CSS && CSS.escape ? CSS.escape(el.id) : el.id);
+    for (const attr of REBIND_ATTR_CANDIDATES) {
+      const val = el.getAttribute(attr);
+      if (val) {
+        const escaped = window.CSS && CSS.escape ? CSS.escape(val) : val.replace(/"/g, '\\"');
+        return `[${attr}="${escaped}"]`;
+      }
+    }
+    return null;
+  }
+
+  const SHORTLIST_CACHE_KEY_PREFIX = 'color-shortlist:';
+  const SHORTLIST_RUNNER_UP_COUNT = 2;
+
+  function shortlistCacheKey() {
+    return SHORTLIST_CACHE_KEY_PREFIX + location.hostname;
+  }
+
+  // readCandidateColor(el, property) -> rgb | null. Re-reads the SAME
+  // property that originally won for this candidate — not always
+  // backgroundColor, since the real winning property varies (border,
+  // text, caret) depending on what the site actually styled.
+  function readCandidateColor(el, property) {
+    const cs = getComputedStyle(el);
+    const str = cs[property];
+    if (!isOpaqueColor(str)) return null;
+    return resolveSampledColor(str, el);
+  }
+
+  // saveAccentShortlist(candidates) -> Promise. candidates: the return
+  // shape of discoverAccentCandidates, winner first. Only candidates
+  // with a real rebind selector are stored; others are silently
+  // skipped, not an error. Fails silently and completely if
+  // JLib.cache isn't loaded, or refuses (no script registered) — pure
+  // enhancement, never a requirement, same pattern as every other
+  // optional-dependency check in this file.
+  async function saveAccentShortlist(candidates) {
+    if (!JLib.cache) return;
+    const entries = candidates
+      .slice(0, 1 + SHORTLIST_RUNNER_UP_COUNT)
+      .map((c) => ({ selector: deriveRebindSelector(c.el), property: c.property, rgb: c.rgb }))
+      .filter((e) => e.selector);
+    if (entries.length === 0) return;
+    try {
+      await JLib.cache.set(shortlistCacheKey(), entries);
+    } catch (e) {
+      // JLib.cache.ensureInit() refuses without a registered script —
+      // that's a real, deliberate refusal elsewhere in this codebase,
+      // not something this optional enhancement should surface as an
+      // error of its own.
+    }
+  }
+
+  async function loadAccentShortlist() {
+    if (!JLib.cache) return null;
+    try {
+      const entries = await JLib.cache.get(shortlistCacheKey());
+      return entries || null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Perceptual-distance threshold for trusting the cache at all —
+  // deliberately tighter than MAX_SEED_HUE_DRIFT (0.35) above, which
+  // answers a different question ("how far can a stated PREFERENCE
+  // reasonably pull from reality," a generous budget by design). This
+  // answers "is the real underlying color still approximately the
+  // same" — normal noise (a redeploy's hashed class names changing,
+  // minor anti-aliasing differences) should stay well under this,
+  // while a genuine site redesign blows past it. Not yet empirically
+  // tuned — same honesty flag as the other new thresholds this pass.
+  const CACHE_TRUST_DRIFT_THRESHOLD = 0.12;
+
+  // revalidateAccentShortlist(entries) -> { trusted, rgb }. Two
+  // separate questions, deliberately kept separate rather than
+  // conflated into one check:
+  //   - do we trust the cache AT ALL: only the PREVIOUS WINNER's
+  //     (entries[0]) drift matters here. A runner-up moving around
+  //     isn't evidence the site changed — it was never what was
+  //     actually shown, so its drift says nothing about whether the
+  //     cache as a whole is still trustworthy.
+  //   - which candidate wins TODAY: once trusted, compares EVERY
+  //     entry (winner and runner-ups) against its OWN prior cached
+  //     value, using TOTAL perceptual drift (perceptualDistance's
+  //     single combined OKLab number, not separate per-channel
+  //     checks) — least-drifted wins. Can genuinely promote a runner-
+  //     up over the old winner.
+  function revalidateAccentShortlist(entries) {
+    if (!entries || entries.length === 0) return { trusted: false, rgb: null };
+
+    const previousWinner = entries[0];
+    const winnerEl = document.querySelector(previousWinner.selector);
+    if (!winnerEl) return { trusted: false, rgb: null }; // selector no longer matches anything -- real structural change
+    const liveWinnerRgb = readCandidateColor(winnerEl, previousWinner.property);
+    if (!liveWinnerRgb) return { trusted: false, rgb: null };
+
+    const winnerDrift = perceptualDistance(liveWinnerRgb, previousWinner.rgb);
+    if (winnerDrift > CACHE_TRUST_DRIFT_THRESHOLD) return { trusted: false, rgb: null };
+
+    // Cache trusted as a whole — now decide which entry actually wins
+    // THIS session, checking every entry's own drift, not just the
+    // winner's.
+    let bestRgb = liveWinnerRgb;
+    let bestDrift = winnerDrift;
+    for (let i = 1; i < entries.length; i++) {
+      const entry = entries[i];
+      const el = document.querySelector(entry.selector);
+      if (!el) continue;
+      const liveRgb = readCandidateColor(el, entry.property);
+      if (!liveRgb) continue;
+      const drift = perceptualDistance(liveRgb, entry.rgb);
+      if (drift < bestDrift) {
+        bestDrift = drift;
+        bestRgb = liveRgb;
+      }
+    }
+    return { trusted: true, rgb: bestRgb };
+  }
+
+  // getAccentViaShortlist(boundaryEl, base) -> Promise<rgb | null>. The
+  // full Step 6 flow: try the cached shortlist first — cheap, a
+  // handful of querySelector + getComputedStyle reads on a short list,
+  // nowhere near the cost of a full rediscovery. Falls back to a real
+  // discoverAccentCandidates() rediscovery (re-saving a fresh
+  // shortlist for next time) when the cache doesn't exist, doesn't
+  // pass trust-checking, or JLib.cache isn't available at all.
+  async function getAccentViaShortlist(boundaryEl, base) {
+    const cached = await loadAccentShortlist();
+    if (cached) {
+      const { trusted, rgb } = revalidateAccentShortlist(cached);
+      if (trusted && rgb) return rgb;
+    }
+    const candidates = discoverAccentCandidates(boundaryEl, base);
+    if (candidates.length > 0) {
+      saveAccentShortlist(candidates); // fire-and-forget -- doesn't block the return, a failed save is never fatal to getting a real answer now
+      return candidates[0].rgb;
+    }
+    return null;
+  }
+
   return {
     // Public API surface, deliberately narrower than the full set of
     // functions this module defines internally. rgbToOklch, oklchToRgb,
@@ -1466,5 +1665,7 @@ JLib.colorProvider = (function () {
     applyPaletteAsVars,
     // external sources (optional async enrichment layer)
     enrichWithExternalSources,
+    // shortlist (persistent cache + drift-based revalidation, optional async layer)
+    getAccentViaShortlist,
   };
 })();
