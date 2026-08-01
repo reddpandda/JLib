@@ -1,1 +1,1 @@
-["utils.js", "console.js", "registration.js", "dom.js", "events.js", "dedupe.js", "storage.js", "theme.js", "i18n.js", "notifications.js", "module-lifecycle.js", "cache.js"]
+["utils.js", "heuristics.js", "console.js", "registration.js", "dom.js", "events.js", "dedupe.js", "storage.js", "theme.js", "i18n.js", "notifications.js", "module-lifecycle.js", "cache.js"]
