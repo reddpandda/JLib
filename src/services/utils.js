@@ -122,30 +122,33 @@ JLib.utils = (function () {
     };
   }
 
-  return { debounce, throttle, debouncePerKey, makeLogger };
+  // sampleStructuralValue(boundaryEl, readValue, isUsable) — shared
+  // scan-and-majority-vote helper, currently used by radius/shadow
+  // providers (border-provider.js scans its own candidates directly
+  // instead, since it needs to split a color component out from
+  // width/style, which this generic string-returning helper can't do).
+  // Was previously a bare, un-namespaced module-scope function called
+  // directly by name from provider files — moved onto JLib.utils so
+  // every call site is explicit about where it comes from, consistent
+  // with every other shared helper in this codebase.
+  function sampleStructuralValue(boundaryEl, readValue, isUsable) {
+    const candidates = Array.prototype.slice.call(boundaryEl.querySelectorAll('button, [role="button"], .card, [class*="card"], [class*="panel"], [class*="modal"]')).slice(0, 20);
+    candidates.unshift(boundaryEl);
+    const counts = new Map();
+    let best = null;
+    let bestCount = 0;
+    candidates.forEach((node) => {
+      const val = readValue(node);
+      if (!isUsable(val)) return;
+      const count = (counts.get(val) || 0) + 1;
+      counts.set(val, count);
+      if (count > bestCount) {
+        bestCount = count;
+        best = val;
+      }
+    });
+    return best;
+  }
+
+  return { debounce, throttle, debouncePerKey, makeLogger, sampleStructuralValue };
 })();
-
-
-// ---------------------------------------------------------------------------
-// shared sampling helper — used by radius/shadow/border providers, avoids
-// tripling the same "scan a few candidates, pick the most common
-// non-trivial value, fall back if nothing usable" logic three times
-// ---------------------------------------------------------------------------
-function _jlibSampleStructuralValue(boundaryEl, readValue, isUsable) {
-  const candidates = Array.prototype.slice.call(boundaryEl.querySelectorAll('button, [role="button"], .card, [class*="card"], [class*="panel"], [class*="modal"]')).slice(0, 20);
-  candidates.unshift(boundaryEl);
-  const counts = new Map();
-  let best = null;
-  let bestCount = 0;
-  candidates.forEach((node) => {
-    const val = readValue(node);
-    if (!isUsable(val)) return;
-    const count = (counts.get(val) || 0) + 1;
-    counts.set(val, count);
-    if (count > bestCount) {
-      bestCount = count;
-      best = val;
-    }
-  });
-  return best;
-}
