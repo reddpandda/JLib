@@ -118,7 +118,7 @@ JLib.theme = (function () {
       '--jsp-accent-bg': 'rgba(176, 176, 176, 0.15)',
       '--jsp-border': 'rgba(255, 255, 255, 0.06)',
       '--jsp-hover': 'rgba(255, 255, 255, 0.05)',
-      '--jsp-toggle-off': '#3a3a3c',
+      '--jsp-toggle-off': '#3a3a3a',
       // danger stays the SAME red every other theme uses — this is a
       // semantic/functional color (errors), not brand identity, so
       // there's no reason for it to be neutral too.
