@@ -198,3 +198,8 @@ JLib.console.register('cache.scriptVersionChanged', {
   explain: 'Purely informational — nothing was wiped, migrated, or otherwise touched automatically. Some version bumps change what a cached value means or how it should be shaped; many don\u2019t. This flag exists so an author can decide, rather than JLib guessing and risking a false-positive wipe of good data.',
   hint: 'Check JLib.cache.versionChanged (after awaiting any cache operation) if your script needs to react to its own version changing.',
 });
+JLib.console.register('triggers.duplicateKey', {
+  template: (key) => `JLib.triggers.watch("${key}", ...) refused — a watch is already active under this key. Ignoring the duplicate registration.`,
+  explain: 'Only the first watch() call for a given key stays active, same "registration is existence" rule as everything else. Note this only applies while the original watch is still active — a once:true watch that already fired and auto-stopped has already freed its key, so re-registering the same key after that point is not a conflict and will not warn.',
+  hint: 'Use a different key, or call the stop() function returned by the original watch() before registering a new one under the same key.',
+});
