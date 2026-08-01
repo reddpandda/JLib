@@ -5,7 +5,7 @@
  * shadowProvider — same shape as radiusProvider, scoped to box-shadow.
  *
  * Depends on: JLib.colorProvider (anchor resolution), JLib.utils
- * (_jlibSampleStructuralValue)
+ * (JLib.utils.sampleStructuralValue)
  */
 var JLib = typeof JLib !== 'undefined' ? JLib : {};
 
@@ -15,7 +15,7 @@ JLib.shadowProvider = (function () {
   let cache = new WeakMap();
 
   function sampleShadow(boundaryEl) {
-    const found = _jlibSampleStructuralValue(
+    const found = JLib.utils.sampleStructuralValue(
       boundaryEl,
       (node) => getComputedStyle(node).boxShadow,
       (val) => val && val !== 'none'
