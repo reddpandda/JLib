@@ -6,12 +6,29 @@
  * as modules, dictionaries, and everything else in this codebase.
  * registerTheme() itself and _themeRegistry live in registration.js,
  * alongside every other registerX function — this file registers the
- * seven built-in themes using that same public mechanism (nothing about
+ * eight built-in themes using that same public mechanism (nothing about
  * them is special-cased internally beyond registering first) and
  * provides the consumer-facing JLib.theme.create() instance.
  *
  *   dark, light        — fully authored, fully static. No providers
  *                        touched at all, ever.
+ *   neutral            — fully authored, fully static, same as dark/
+ *                        light — but deliberately hue-free (every color
+ *                        slot is a pure R=G=B gray, no brand violet, no
+ *                        sampled color) rather than a third real design
+ *                        choice. Exists specifically as the instant,
+ *                        zero-cost paint for a user-triggered panel open
+ *                        before whatever the real target theme (a
+ *                        sample, a seed-hued accent, an author's own
+ *                        choice) is actually ready — JLib.triggers'
+ *                        reveal path applies this immediately, then
+ *                        transitionPalette-crossfades to the real result
+ *                        once it resolves. Deliberately NOT dark or
+ *                        light leaning in its own right despite the dark
+ *                        background — the point is that nothing about
+ *                        it should read as a finished, opinionated
+ *                        theme, since committing to real color IS the
+ *                        reveal moment this exists to set up.
  *   system             — OS-preference selector between dark/light.
  *                        Not a third palette, just a chooser.
  *   followWebsite      — fully dogfooded: colorProvider for the palette,
@@ -47,7 +64,7 @@ JLib.theme = (function () {
     return !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
   }
 
-  // ---------- authored static palettes (used by dark/light/smart-*) ----------
+  // ---------- authored static palettes (used by dark/light/neutral/smart-*) ----------
   const STATIC_PALETTE = {
     dark: {
       '--jsp-bg': 'linear-gradient(145deg, #14141c 0%, #0a0a0e 100%)',
@@ -81,6 +98,35 @@ JLib.theme = (function () {
       '--jsp-radius': '16px',
       '--jsp-font': JLib.fontProvider.JLIB_AUTHORED_FONT,
     },
+    // Every color slot below is a pure R=G=B gray — no hue anywhere,
+    // deliberately, unlike dark/light's real brand violet. A dark
+    // background was still the right base to pick (matches this
+    // codebase's own existing dark-leaning fallback-of-fallbacks
+    // convention — colorProvider.DEFAULT_PALETTE is dark too), but
+    // nothing else here should read as a real, finished design choice.
+    // Contrast verified directly, not eyeballed: bg-vs-text 13.11:1
+    // (needs 4.5), bg-vs-muted 5.92:1 (needs 3), bg-vs-accent 7.69:1
+    // (needs 3, non-text UI bar) — all comfortably clear their bars,
+    // not borderline.
+    neutral: {
+      '--jsp-bg': '#1e1e1e',
+      '--jsp-sidebar-bg': 'rgba(255, 255, 255, 0.03)',
+      '--jsp-text': '#e4e4e4',
+      '--jsp-muted': '#9a9a9a',
+      '--jsp-accent': '#b0b0b0',
+      '--jsp-accent-hover': '#c4c4c4',
+      '--jsp-accent-bg': 'rgba(176, 176, 176, 0.15)',
+      '--jsp-border': 'rgba(255, 255, 255, 0.06)',
+      '--jsp-hover': 'rgba(255, 255, 255, 0.05)',
+      '--jsp-toggle-off': '#3a3a3c',
+      // danger stays the SAME red every other theme uses — this is a
+      // semantic/functional color (errors), not brand identity, so
+      // there's no reason for it to be neutral too.
+      '--jsp-danger': '#e74c3c',
+      '--jsp-shadow': '0 20px 60px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(255, 255, 255, 0.06)',
+      '--jsp-radius': '16px',
+      '--jsp-font': JLib.fontProvider.JLIB_AUTHORED_FONT,
+    },
   };
 
   // Maps a colorProvider palette onto `--jsp-*` color variables. Pure
@@ -108,6 +154,7 @@ JLib.theme = (function () {
   // ---------- built-in theme registrations ----------
   JLib.registerTheme('dark', () => STATIC_PALETTE.dark);
   JLib.registerTheme('light', () => STATIC_PALETTE.light);
+  JLib.registerTheme('neutral', () => STATIC_PALETTE.neutral);
   JLib.registerTheme('system', (targetEl) => JLib._themeRegistry[prefersDark() ? 'dark' : 'light'](targetEl));
 
   JLib.registerTheme('followWebsite', (targetEl) => {
