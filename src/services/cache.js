@@ -35,78 +35,83 @@
  */
 var JLib = typeof JLib !== 'undefined' ? JLib : {};
 
-// ----------------------------------------------------------------------------
-// Vendored from idb-keyval (jakearchibald/idb-keyval, Apache-2.0), converted
-// from TypeScript to plain JS. Only the functions JLib.cache actually uses
-// are included (promisifyRequest, createStore, get, set, del, entries) —
-// same "small, stable, don't re-derive it ourselves" reasoning already
-// applied to the vendored OKLCH color math elsewhere in this file. This
-// replaces our own hand-rolled IndexedDB wrapper, which was correct (no
-// classic transaction-lifetime bugs, verified) but not worth continuing to
-// carry when a small, well-maintained, permissively-licensed original
-// already exists for exactly this problem.
-// ----------------------------------------------------------------------------
-function _idbPromisifyRequest(request) {
-  return new Promise((resolve, reject) => {
-    request.oncomplete = request.onsuccess = () => resolve(request.result);
-    request.onabort = request.onerror = () => reject(request.error);
-  });
-}
-function _idbCreateStore(dbName, storeName) {
-  let dbp;
-  function getDB() {
-    if (dbp) return dbp;
-    const request = indexedDB.open(dbName);
-    request.onupgradeneeded = () => request.result.createObjectStore(storeName);
-    dbp = _idbPromisifyRequest(request);
-    dbp.then(
-      (db) => {
-        // Safari sometimes closes the connection on its own; this lets us
-        // reopen on next use instead of silently failing forever after.
-        db.onclose = () => (dbp = undefined);
-      },
-      () => {}
-    );
-    return dbp;
-  }
-  return (txMode, callback) => getDB().then((db) => callback(db.transaction(storeName, txMode).objectStore(storeName)));
-}
-function _idbGet(key, customStore) {
-  return customStore('readonly', (store) => _idbPromisifyRequest(store.get(key)));
-}
-function _idbSet(key, value, customStore) {
-  return customStore('readwrite', (store) => {
-    store.put(value, key);
-    return _idbPromisifyRequest(store.transaction);
-  });
-}
-function _idbDel(key, customStore) {
-  return customStore('readwrite', (store) => {
-    store.delete(key);
-    return _idbPromisifyRequest(store.transaction);
-  });
-}
-function _idbEntries(customStore) {
-  return customStore('readonly', (store) => {
-    if (store.getAll && store.getAllKeys) {
-      return Promise.all([_idbPromisifyRequest(store.getAllKeys()), _idbPromisifyRequest(store.getAll())]).then(([keys, values]) => keys.map((k, i) => [k, values[i]]));
-    }
-    const items = [];
-    return new Promise((resolve, reject) => {
-      store.openCursor().onsuccess = function () {
-        if (!this.result) {
-          resolve();
-          return;
-        }
-        items.push([this.result.key, this.result.value]);
-        this.result.continue();
-      };
-    }).then(() => items);
-  });
-}
-
 JLib.cache = (function () {
   const { debounce } = JLib.utils;
+
+  // --------------------------------------------------------------------------
+  // Vendored from idb-keyval (jakearchibald/idb-keyval, Apache-2.0), converted
+  // from TypeScript to plain JS. Only the functions this module actually uses
+  // are included (promisifyRequest, createStore, get, set, del, entries) —
+  // same "small, stable, don't re-derive it ourselves" reasoning already
+  // applied to the vendored OKLCH color math elsewhere in this codebase. This
+  // replaces our own hand-rolled IndexedDB wrapper, which was correct (no
+  // classic transaction-lifetime bugs, verified) but not worth continuing to
+  // carry when a small, well-maintained, permissively-licensed original
+  // already exists for exactly this problem.
+  //
+  // Declared inside this IIFE, not at module scope — nothing outside
+  // JLib.cache ever calls these, so closure gives them real privacy
+  // instead of relying on an underscore-prefix naming convention to
+  // signal "don't call this directly."
+  // --------------------------------------------------------------------------
+  function idbPromisifyRequest(request) {
+    return new Promise((resolve, reject) => {
+      request.oncomplete = request.onsuccess = () => resolve(request.result);
+      request.onabort = request.onerror = () => reject(request.error);
+    });
+  }
+  function idbCreateStore(dbName, storeName) {
+    let dbp;
+    function getDB() {
+      if (dbp) return dbp;
+      const request = indexedDB.open(dbName);
+      request.onupgradeneeded = () => request.result.createObjectStore(storeName);
+      dbp = idbPromisifyRequest(request);
+      dbp.then(
+        (db) => {
+          // Safari sometimes closes the connection on its own; this lets us
+          // reopen on next use instead of silently failing forever after.
+          db.onclose = () => (dbp = undefined);
+        },
+        () => {}
+      );
+      return dbp;
+    }
+    return (txMode, callback) => getDB().then((db) => callback(db.transaction(storeName, txMode).objectStore(storeName)));
+  }
+  function idbGet(key, customStore) {
+    return customStore('readonly', (store) => idbPromisifyRequest(store.get(key)));
+  }
+  function idbSet(key, value, customStore) {
+    return customStore('readwrite', (store) => {
+      store.put(value, key);
+      return idbPromisifyRequest(store.transaction);
+    });
+  }
+  function idbDel(key, customStore) {
+    return customStore('readwrite', (store) => {
+      store.delete(key);
+      return idbPromisifyRequest(store.transaction);
+    });
+  }
+  function idbEntries(customStore) {
+    return customStore('readonly', (store) => {
+      if (store.getAll && store.getAllKeys) {
+        return Promise.all([idbPromisifyRequest(store.getAllKeys()), idbPromisifyRequest(store.getAll())]).then(([keys, values]) => keys.map((k, i) => [k, values[i]]));
+      }
+      const items = [];
+      return new Promise((resolve, reject) => {
+        store.openCursor().onsuccess = function () {
+          if (!this.result) {
+            resolve();
+            return;
+          }
+          items.push([this.result.key, this.result.value]);
+          this.result.continue();
+        };
+      }).then(() => items);
+    });
+  }
 
   const EAGER_LOAD_KEY_THRESHOLD = 500; // hybrid gate: eager-load below this many keys, lazy above it
 
@@ -243,7 +248,7 @@ JLib.cache = (function () {
   function checkScriptVersion() {
     const currentVersion = typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version;
     if (!currentVersion) return Promise.resolve(); // GM_info unavailable — nothing to compare, stay silent rather than warn about something outside our control
-    return _idbGet(SCRIPT_VERSION_KEY, idbStore)
+    return idbGet(SCRIPT_VERSION_KEY, idbStore)
       .then((stored) => {
         const lastVersion = stored ? stored.value : null;
         if (lastVersion !== null && lastVersion !== currentVersion) {
@@ -251,7 +256,7 @@ JLib.cache = (function () {
           JLib.console.info('cache.scriptVersionChanged', lastVersion, currentVersion);
         }
         if (lastVersion !== currentVersion) {
-          return _idbSet(SCRIPT_VERSION_KEY, { value: currentVersion, clock: 1 }, idbStore);
+          return idbSet(SCRIPT_VERSION_KEY, { value: currentVersion, clock: 1 }, idbStore);
         }
       })
       .catch(() => {}); // a version-check failure should never break real init
@@ -265,8 +270,8 @@ JLib.cache = (function () {
       readyPromise.catch(() => {}); // avoid an unhandled-rejection warning for a deliberately-refused init
       return readyPromise;
     }
-    idbStore = _idbCreateStore(dbName(), 'kv');
-    readyPromise = _idbEntries(idbStore)
+    idbStore = idbCreateStore(dbName(), 'kv');
+    readyPromise = idbEntries(idbStore)
       .then((allEntries) => {
         eager = allEntries.length <= EAGER_LOAD_KEY_THRESHOLD;
         if (eager) allEntries.forEach(([k, v]) => memory.set(k, v));
@@ -290,7 +295,7 @@ JLib.cache = (function () {
   // silently drop every write except the most recent one whenever two
   // different keys were set within the same debounce window.
   const debouncedFlush = JLib.utils.debouncePerKey((key, entry) => {
-    _idbSet(key, entry, idbStore).catch((err) => JLib.console.warn('cache.persistFailed', key, err));
+    idbSet(key, entry, idbStore).catch((err) => JLib.console.warn('cache.persistFailed', key, err));
   }, 250);
 
   // ---------- public API ----------
@@ -324,7 +329,7 @@ JLib.cache = (function () {
       // IndexedDB from a prior session or another tab, producing a
       // falsely-low value other tabs would correctly reject as stale. A
       // real fresh read first avoids that regardless of eager/lazy mode.
-      return _idbGet(key, idbStore).then((stored) => {
+      return idbGet(key, idbStore).then((stored) => {
         commitSet(key, value, stored ? stored.clock : 0);
       });
     });
@@ -337,7 +342,7 @@ JLib.cache = (function () {
     await ensureInit();
     if (memory.has(key)) return memory.get(key).value;
     if (eager) return undefined; // eager mode already loaded everything that exists
-    const stored = await _idbGet(key, idbStore);
+    const stored = await idbGet(key, idbStore);
     if (stored) {
       memory.set(key, stored);
       return stored.value;
@@ -349,7 +354,7 @@ JLib.cache = (function () {
     return ensureInit().then(() => {
       memory.delete(key);
       debouncedFlush.cancel(key); // a pending debounced write for this key would otherwise resurrect it after deletion
-      return _idbDel(key, idbStore);
+      return idbDel(key, idbStore);
     });
   }
 
