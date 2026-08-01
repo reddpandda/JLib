@@ -23,10 +23,18 @@
  * first, and theme.js's built-in theme registrations need every
  * structural provider loaded first.
  *
+ * Also writes bundles/.version.json on every run — see writeVersionFile
+ * below. The live bundles aren't guaranteed to match current src/ at
+ * any given moment (nothing enforces a rebuild after a source edit);
+ * this file is the mechanical way to check whether they still do,
+ * instead of trusting that someone remembered.
+ *
  * Run with: node build.js
  */
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
+const { execSync } = require('child_process');
 
 const SRC = path.join(__dirname, '..', 'src');
 const OUT = __dirname;
@@ -101,6 +109,58 @@ function buildModules() {
   });
 }
 
+// ---------------------------------------------------------------------------
+// Version file — written last, after bundles/ and modules/ are already
+// on disk, so it can hash exactly what this run actually produced.
+// ---------------------------------------------------------------------------
+
+// collectBuiltOutput() -> the full content of every generated bundle and
+// module file, concatenated in a fixed (sorted) order. This is what
+// sourceHash is computed over — not raw src/ — so "hash changed" means
+// precisely "this build would now produce different bytes than last
+// time," including an ordering-only change in some folder's
+// .order.json even when no individual file's content moved, which a
+// hash over raw src/ file contents alone would miss.
+function collectBuiltOutput() {
+  const parts = [];
+  BUNDLES.forEach((bundle) => {
+    parts.push(fs.readFileSync(path.join(OUT, bundle.name), 'utf8'));
+  });
+  if (fs.existsSync(MODULES_OUT)) {
+    fs.readdirSync(MODULES_OUT)
+      .sort()
+      .forEach((f) => parts.push(fs.readFileSync(path.join(MODULES_OUT, f), 'utf8')));
+  }
+  return parts.join('\n');
+}
+
+// getCommitSha() -> current HEAD sha, or null. Not fatal if unavailable
+// (no git context, git not installed) — builtFrom is a nice-to-have
+// precision improvement over the timestamp/hash, not something the
+// rest of the build should depend on.
+function getCommitSha() {
+  try {
+    return execSync('git rev-parse HEAD', { cwd: __dirname, stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString()
+      .trim();
+  } catch (e) {
+    return null;
+  }
+}
+
+function writeVersionFile() {
+  const combined = collectBuiltOutput();
+  const sourceHash = crypto.createHash('sha256').update(combined).digest('hex');
+  const version = {
+    lastBuilt: new Date().toISOString(),
+    sourceHash,
+    builtFrom: getCommitSha(),
+  };
+  fs.writeFileSync(path.join(OUT, '.version.json'), JSON.stringify(version, null, 2) + '\n', 'utf8');
+  console.log('built .version.json', `(sourceHash ${sourceHash.slice(0, 12)}..., builtFrom ${version.builtFrom || 'unknown'})`);
+}
+
 buildBundles();
 buildModules();
+writeVersionFile();
 console.log('\nBuild complete.');
