@@ -7,7 +7,7 @@
 Full features, built on `JLib.moduleBase` (see
 `../services/module-lifecycle.js`) so header/section markup is identical
 across every module rather than hand-rolled per feature. Deep
-explanation: see [../../Reference.md](../../Reference.md).
+explanation: see [../../Architecture.md](../../Architecture.md).
 
 | File / folder | What it is |
 |---|---|
@@ -19,7 +19,7 @@ explanation: see [../../Reference.md](../../Reference.md).
 All four files build onto a shared, intentionally private `JLib._sp`
 namespace — not part of the public API a userscript author calls
 directly. Full reasoning for each in
-[../../Reference.md](../../Reference.md).
+[../../Architecture.md](../../Architecture.md).
 
 | File | What it is |
 |---|---|

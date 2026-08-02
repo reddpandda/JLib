@@ -4,7 +4,7 @@
 > moved since, treat contents as unconfirmed.
 
 Reusable visual primitives. Order: see `.order.json`. Deep explanation:
-see [../../Reference.md](../../Reference.md).
+see [../../Architecture.md](../../Architecture.md).
 
 All of these share one styling pattern worth naming once instead of
 repeating per row: a single constructable `CSSStyleSheet`, parsed once,

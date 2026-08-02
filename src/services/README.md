@@ -7,7 +7,7 @@
 Foundational, non-visual pieces. Order and dependency chain: see
 `.order.json` (`bundles/build.js` reads this directly — it's the real
 source of truth, not this list). Deep explanation of why any of this
-works the way it does: see [../../Reference.md](../../Reference.md).
+works the way it does: see [../../Architecture.md](../../Architecture.md).
 
 | File | What it is |
 |---|---|

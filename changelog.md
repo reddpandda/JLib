@@ -3,6 +3,22 @@
 > Verified against commit `3c8011f` (2026-08-01) — if `src/` has moved
 > since, treat entries above the last one as unconfirmed.
 
+## API.md restructure — Onboarding / Reference / Function Index, and Architecture rename
+
+- **Restructured:** `API.md` into three sections — Onboarding (a curated
+  dozen-ish functions in narrative, first-script order, with inline
+  dynamically-sized plain-English examples), Reference (every function,
+  glossary-style, examples collapsed per-entry via `<details>` so the
+  page stays scannable without leaving anything out), and a Function
+  Index (one collapsed table, jump-linked into Reference). Example
+  count per entry is intentionally uncapped — sized to how much real
+  distinct usage a function has, never padded to hit a number.
+- **Renamed:** `Reference.md` → `Architecture.md`. The old name
+  collided with what "Reference" now means in this repo (a function/API
+  reference, i.e. the new `API.md`) — what this file actually documents
+  (core rules, internal glossary) is architecture, not a conventional
+  API reference. Every cross-link across the repo updated to match.
+
 ## API.md — a new document, most likely to go stale
 
 - **Added:** `API.md` — a flat, function-by-function reference across
@@ -12,7 +28,7 @@
   explicit up-front warning that this is the one doc tied to individual
   signatures rather than architecture, so it's the most likely to drift
   — a mismatch against real source means trust the source, not this
-  file. Cross-linked from `README.md` alongside `Reference.md`.
+  file. Cross-linked from `README.md` alongside `Architecture.md`.
 
 ## Pass B — full read, remaining docs filled in
 
@@ -28,7 +44,7 @@
   JLib's own chrome (`button.js`, `inputs.js`, `tabs.js`,
   `search-input.js`) already used — these two were the only holdouts
   still using the vulnerable pattern.
-- **Completed:** `Reference.md`'s glossary, and the four subfolder
+- **Completed:** `Architecture.md`'s glossary, and the four subfolder
   `README.md` placeholders (`theme.js`, `cache.js`, `color-provider.js`,
   all of `settings-panel/`) — every file in `src/` has now been read in
   full at least once.
@@ -72,14 +88,14 @@ bug-fix-in-real-use and polish passes instead: this codebase now has a
 real toolset (settings/dashboard, notifications, a full color/font/
 structure provider family, localization, cross-tab-aware storage) built
 against the scope laid out in [SCOPE.md](SCOPE.md) and the rules laid
-out in [REFERENCE.md](REFERENCE.md).
+out in [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ## v4.0.0 — providers, localization, cross-tab storage, mandatory registration
 
 Breaking. `JLib.registerScript({ namespace })` must now be called before
 anything namespace-scoped will operate — Settings Panel instances,
 `JLib.cache`. A script that doesn't register gets a `console.warn` and a
-refusal, not a silent default. See `REFERENCE.md` — "registration is
+refusal, not a silent default. See `ARCHITECTURE.md` — "registration is
 existence" now applies to the userscript itself, not just modules.
 
 **New — provider family**

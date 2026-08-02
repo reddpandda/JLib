@@ -8,7 +8,7 @@ Sample the environment, get back a validated, ready-to-use answer,
 instead of hand-writing CSS per site. Order: see `.order.json` — note
 `color-provider.js` loads first; every other provider here depends on
 it for anchor resolution. Deep explanation ("providers must provide,"
-the "one door" rule): see [../../Reference.md](../../Reference.md).
+the "one door" rule): see [../../Architecture.md](../../Architecture.md).
 
 | File | What it is |
 |---|---|
