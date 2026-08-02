@@ -28,6 +28,7 @@
  *
  * Depends on: JLib.dom
  */
+var JLib = typeof JLib !== 'undefined' ? JLib : {};
 
 JLib.moduleBase = (function () {
   const { el } = JLib.dom;
@@ -94,7 +95,7 @@ JLib.moduleBase = (function () {
 
 
 // ============================================================================
-// module registration + render lifecycle (formerly core/dashboard.js)
+// module registration + render lifecycle
 // ============================================================================
 /*
  * Registration + render — modules self-register via JLib.registerModule()
@@ -139,7 +140,6 @@ JLib.moduleBase = (function () {
 // registerModule() itself, and the state it governs (_modules, _rendered),
 // live in registration.js alongside every other registerX function — this
 // file consumes that same state for the render lifecycle below.
-var JLib = typeof JLib !== 'undefined' ? JLib : {};
 
 JLib.scheduleRender = function scheduleRender(opts) {
   Promise.resolve().then(() => JLib.render(opts));

@@ -9,10 +9,8 @@
 var JLib = typeof JLib !== 'undefined' ? JLib : {};
 /*
  * Notifications — a headless core (queue + staling engine + dismissal
- * memory) that any presenter renders through. v1's dom-toolkit.js had a
- * single hardcoded toast() with a timed fade; this replaces it with a
- * real service, and toast becomes one of three presenters (toast/banner/
- * modal) driven by the same core.
+ * memory) that any presenter renders through. toast is one of three
+ * presenters (toast/banner/modal) driven by the same core.
  *
  * Depends on: JLib.dom (rendering), optionally JLib.storage (for
  * persist + "do not show again", which needs a stable notification id

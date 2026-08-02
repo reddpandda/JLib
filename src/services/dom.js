@@ -9,11 +9,9 @@
 var JLib = typeof JLib !== 'undefined' ? JLib : {};
 /*
  * DOM — el()/h() builder, $/$$ selector shortcuts. Pure DOM construction,
- * no privileged APIs.
- *
- * toast() lived here in v1 (dom-toolkit.js) — moved to services/notifications.js
- * in this rewrite, since it grew into a real staling-engine-backed service
- * and doesn't belong bundled with plain DOM construction anymore.
+ * no privileged APIs. Toast/notification rendering lives in
+ * services/notifications.js, not here — this file stays scoped to plain
+ * element construction only.
  */
 
 JLib.dom = (function () {

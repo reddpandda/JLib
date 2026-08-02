@@ -10,16 +10,6 @@ var JLib = typeof JLib !== 'undefined' ? JLib : {};
 /*
  * Event Delegation Helper — one listener on a stable container, matched
  * against dynamically-added descendants via closest(). No privileged APIs.
- *
- * Note on provenance, unlike dom-toolkit/settings-schema: the userscript
- * that dom-toolkit and settings-schema were ported from didn't actually
- * have a delegation pattern to port — it binds handlers directly to
- * elements it builds itself, and finds/clicks page elements via fresh
- * querySelectorAll passes rather than delegated listening. This is
- * instead generalized from a different project's closest()-based tile
- * click correlation (`e.target.closest('[data-item-id]')` inside a raw
- * capture-phase listener) — the same shape, formalized so you're not
- * hand-rolling it per script.
  */
 
 JLib.events = (function () {

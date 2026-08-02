@@ -12,9 +12,10 @@ var JLib = typeof JLib !== 'undefined' ? JLib : {};
  * storage, parent/child dependency enforcement, and migration support.
  * Requires @grant GM_setValue / @grant GM_getValue.
  *
- * Ported as-is from settings-schema.js (v1). No changes in this rewrite —
- * this piece is being left alone on purpose (it's not done yet, but that's
- * a separate task from the dashboard/module rewrite).
+ * The schema-driven storage backend Settings Panel is built on. Settings
+ * themselves stay on GM storage deliberately — true cross-site reach is
+ * something only GM storage provides, which is why this is the one
+ * exception to JLib.cache owning non-registration-gated persistent data.
  */
 
 JLib.storage = (function () {
