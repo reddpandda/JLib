@@ -327,9 +327,9 @@ JLib.render = function render(opts) {
     .jlib-dashboard-back:hover { color: var(--jsp-text); }
     .jlib-dashboard-module-container { flex:1; min-height:0; overflow-y:auto; }
   `;
-  const style = document.createElement('style');
-  style.textContent = DASHBOARD_CSS;
-  document.head.appendChild(style);
+  const dashboardSheet = new CSSStyleSheet();
+  dashboardSheet.replaceSync(DASHBOARD_CSS);
+  JLib.shadow.adoptStylesheet(dashboardSheet, JLib.shadow.getRoot());
 
   JLib.dashboard = {
     open: modal.open,

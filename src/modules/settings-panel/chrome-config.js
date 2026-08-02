@@ -246,9 +246,9 @@ JLib.modules = JLib.modules || {};
   function injectStylesOnce() {
     if (stylesInjected) return;
     stylesInjected = true;
-    const style = document.createElement('style');
-    style.textContent = PANEL_CSS;
-    document.head.appendChild(style);
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(PANEL_CSS);
+    JLib.shadow.adoptStylesheet(sheet, JLib.shadow.getRoot());
   }
   injectStylesOnce();
 

@@ -9,11 +9,14 @@
   in `chrome-config.js`) still described the pre-v3.0.0 "core/modules"
   split. Updated to name the real `services`/`providers`/`elements`/
   `modules` structure.
-- **Flagged, not fixed:** `chrome-config.js`'s `PANEL_CSS` is injected
-  via a raw `document.head` `<style>` tag — the same CSP-vulnerable
-  pattern `DASHBOARD_CSS` has (see the CSP/shadow-root discussion this
-  pass surfaced). A second occurrence of the same bug, left alone
-  pending a deliberate decision rather than fixed under time pressure.
+- **Fixed:** both CSP-vulnerable raw `document.head` `<style>` tag
+  injections found this pass — `module-lifecycle.js`'s `DASHBOARD_CSS`
+  and `chrome-config.js`'s `PANEL_CSS`. Both now go through
+  `JLib.shadow.adoptStylesheet()` with a real constructable
+  `CSSStyleSheet`, the same CSP-exempt mechanism every other piece of
+  JLib's own chrome (`button.js`, `inputs.js`, `tabs.js`,
+  `search-input.js`) already used — these two were the only holdouts
+  still using the vulnerable pattern.
 - **Completed:** `Reference.md`'s glossary, and the four subfolder
   `README.md` placeholders (`theme.js`, `cache.js`, `color-provider.js`,
   all of `settings-panel/`) — every file in `src/` has now been read in
