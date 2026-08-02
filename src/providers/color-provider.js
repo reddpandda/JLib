@@ -1,5 +1,5 @@
 // ============================================================================
-// services/color-provider.js
+// providers/color-provider.js
 // ============================================================================
 /*
  * colorProvider — the only thing in this codebase that does color math.
