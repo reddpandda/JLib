@@ -3,6 +3,17 @@
 > Verified against commit `3c8011f` (2026-08-01) — if `src/` has moved
 > since, treat entries above the last one as unconfirmed.
 
+## API.md — a new document, most likely to go stale
+
+- **Added:** `API.md` — a flat, function-by-function reference across
+  every namespace in `src/`, verified against the real source (every
+  file was re-read in full for signatures, not inferred from call
+  sites), with a plain-English example per function/group. Carries an
+  explicit up-front warning that this is the one doc tied to individual
+  signatures rather than architecture, so it's the most likely to drift
+  — a mismatch against real source means trust the source, not this
+  file. Cross-linked from `README.md` alongside `Reference.md`.
+
 ## Pass B — full read, remaining docs filled in
 
 - **Fixed:** `JLIB_ABOUT` (the real, end-user-facing About panel text

@@ -30,7 +30,9 @@ bundles/    What a userscript actually @requires — generated from src/
 
 For the reasoning behind how this is built — the rules every part of it
 follows and what each internal piece actually is — see
-[REFERENCE.md](REFERENCE.md). For how the project's scope evolved (what
+[REFERENCE.md](REFERENCE.md). For a flat, function-by-function lookup —
+what you can call and a plain-English example — see
+[API.md](API.md). For how the project's scope evolved (what
 shipped, what grew, what was cut, what might come later) see
 [SCOPE.md](SCOPE.md).
 
