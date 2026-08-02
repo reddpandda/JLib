@@ -95,7 +95,7 @@ rather than just abandoned.
   userscript at a level a userscript can't reach on its own. Whether or
   when that integration happens, and what shape it would take, is
   entirely undecided. If it's ever built, it would need to satisfy the
-  "no confused deputies" rule in [REFERENCE.md](REFERENCE.md) with a
+  "no confused deputies" rule in [ARCHITECTURE.md](ARCHITECTURE.md) with a
   real, dedicated trust model — not an assumption that reporting-only
   behavior is automatically safe just because that's the intent.
 - **Other tooling explored and shelved during design** — several
