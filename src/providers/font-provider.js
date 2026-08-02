@@ -6,7 +6,10 @@ var JLib = typeof JLib !== 'undefined' ? JLib : {};
 JLib.fontProvider = (function () {
   const cp = JLib.colorProvider;
   const JLIB_AUTHORED_FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif';
-  let cache = new WeakMap();
+  // Shared auto-invalidating cache, same pattern radius/shadow/border
+  // now use — consistent across every mini-provider rather than this
+  // one staying on the old manual-invalidate-only WeakMap.
+  const cache = JLib.anchorCache.create();
 
   // Splits a computed font-family stack into individual family names, in
   // the order the browser/site declared them — this ordering already
@@ -157,16 +160,15 @@ JLib.fontProvider = (function () {
     return { measure, fits, shrink, wrap, truncate, fitText };
   })();
 
-  // invalidate(el) / invalidateAll() — same reason colorProvider has
-  // these: closes the same "site changed dynamically after we sampled,
-  // no way to recover" gap already fixed once for radius/shadow/border
-  // providers.
+  // invalidate(el) — manual escape hatch kept alongside the shared
+  // cache's automatic invalidation, for cases automatic detection
+  // genuinely can't cover.
   function invalidate(el) {
     if (!el) throw new Error('JLib.fontProvider.invalidate(el) requires an element — use invalidateAll() to clear everything.');
     cache.delete(cp.resolveAnchorBoundary(el));
   }
   function invalidateAll() {
-    cache = new WeakMap();
+    cache.invalidateAll();
   }
 
   return { getRanked, fontType, layout, invalidate, invalidateAll, JLIB_AUTHORED_FONT };
