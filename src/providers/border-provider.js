@@ -28,17 +28,27 @@
  *
  * Depends on: JLib.colorProvider (anchor resolution, resolveSampledColor,
  * ensureContrast, toCssRgb — the real color pipeline, not just the
- * anchor-boundary utility this file used before), JLib.utils
- * (_jlibSampleStructuralValue is NOT used here anymore — border needs
- * the color component split out from the width/style, which the shared
- * generic-string helper can't do, so this file scans candidates itself
- * using the same shape).
+ * anchor-boundary utility this file used before), JLib.anchorCache
+ * (shared auto-invalidating cache), JLib.utils
+ * (_jlibSampleStructuralValue is NOT used here — border needs the
+ * color component split out from the width/style, which the shared
+ * generic-string helper can't do, so this file scans candidates
+ * itself using the same shape).
  */
 var JLib = typeof JLib !== 'undefined' ? JLib : {};
 
 JLib.borderProvider = (function () {
   const cp = JLib.colorProvider;
   const DEFAULT_BORDER = '1px solid rgba(255, 255, 255, 0.08)';
+
+  // Sub-pixel border widths (e.g. "0.3px") are real, valid computed
+  // values on high-DPI displays but unlikely to render as a
+  // meaningfully visible stroke — a candidate this thin is treated the
+  // same as no border at all, rather than sampled as if it were a
+  // deliberate, intentional border. Not yet empirically tuned — same
+  // honesty flag as the other new thresholds this pass.
+  const BORDER_MIN_WIDTH_PX = 0.5;
+
   // Cache holds the RAW sampled parts (width/style/colorStr/sourceEl),
   // not a finished border string — capture is boundary-dependent and
   // expensive (DOM scan), correction is context-dependent and cheap
@@ -47,7 +57,13 @@ JLib.borderProvider = (function () {
   // whichever targetBg happened to be passed on the FIRST call for a
   // given boundary got baked in for every subsequent call, silently
   // wrong for any caller with a different real background.
-  let cache = new WeakMap();
+  //
+  // Shared auto-invalidating cache, same pattern radius/shadow now
+  // use — stores parts (which may legitimately be null, meaning "no
+  // usable border found here"), .has() distinguishes that from "never
+  // sampled at all" so a genuine null result doesn't trigger a
+  // pointless re-scan on every call.
+  const cache = JLib.anchorCache.create();
 
   function sampleBorderParts(boundaryEl) {
     const candidates = Array.prototype.slice.call(boundaryEl.querySelectorAll('button, [role="button"], .card, [class*="card"], [class*="panel"], [class*="modal"]')).slice(0, 20);
@@ -57,7 +73,8 @@ JLib.borderProvider = (function () {
     let bestCount = 0;
     candidates.forEach((node) => {
       const cs = getComputedStyle(node);
-      if (cs.borderWidth === '0px' || cs.borderStyle === 'none') return;
+      if (cs.borderStyle === 'none') return;
+      if (parseFloat(cs.borderWidth) < BORDER_MIN_WIDTH_PX) return; // 0px, or too thin to be a real, intentional border
       const key = `${cs.borderWidth} ${cs.borderStyle} ${cs.borderColor}`;
       const count = (counts.get(key) || 0) + 1;
       counts.set(key, count);
@@ -78,11 +95,10 @@ JLib.borderProvider = (function () {
   function get(el, opts) {
     opts = opts || {};
     const boundary = cp.resolveAnchorBoundary(el);
-    let parts = cache.get(boundary);
-    if (parts === undefined) {
-      parts = sampleBorderParts(boundary);
-      cache.set(boundary, parts);
+    if (!cache.has(boundary)) {
+      cache.set(boundary, sampleBorderParts(boundary));
     }
+    const parts = cache.get(boundary);
     if (!parts) return DEFAULT_BORDER;
 
     const rgb = cp.resolveSampledColor(parts.colorStr, parts.sourceEl);
@@ -96,18 +112,17 @@ JLib.borderProvider = (function () {
     return get(document.body, opts);
   }
 
-  // invalidate(el) / invalidateAll() — same reason colorProvider has
-  // these: closes the same "site changed dynamically after we sampled,
-  // no way to recover" gap already fixed once for the other providers.
-  // Only clears the cached CAPTURE (width/style/colorStr) — correction
-  // was never cached in the first place, so there's nothing else to
-  // clear.
+  // invalidate(el) — manual escape hatch kept alongside the shared
+  // cache's automatic invalidation, for cases automatic detection
+  // genuinely can't cover. Only clears the cached CAPTURE (width/
+  // style/colorStr) — correction was never cached in the first place,
+  // so there's nothing else to clear.
   function invalidate(el) {
     if (!el) throw new Error('JLib.borderProvider.invalidate(el) requires an element — use invalidateAll() to clear everything.');
     cache.delete(cp.resolveAnchorBoundary(el));
   }
   function invalidateAll() {
-    cache = new WeakMap();
+    cache.invalidateAll();
   }
 
   return { get, getGlobal, invalidate, invalidateAll, DEFAULT_BORDER };
