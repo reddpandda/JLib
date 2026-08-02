@@ -9,14 +9,21 @@
  * result.
  *
  * Depends on: JLib.colorProvider (anchor resolution), JLib.utils
- * (JLib.utils.sampleStructuralValue)
+ * (JLib.utils.sampleStructuralValue), JLib.anchorCache (shared
+ * auto-invalidating cache)
  */
 var JLib = typeof JLib !== 'undefined' ? JLib : {};
 
 JLib.radiusProvider = (function () {
   const cp = JLib.colorProvider;
   const DEFAULT_RADIUS = '8px';
-  let cache = new WeakMap();
+  // Shared cache — same auto-invalidating WeakMap-by-boundary pattern
+  // colorProvider's own getPalette() already uses, extracted so this
+  // provider doesn't reimplement it. A site changing its own
+  // structural styling dynamically (class/style/data-theme attribute
+  // changes on a watched node) now invalidates automatically, rather
+  // than requiring a manual invalidate() call to ever recover from it.
+  const cache = JLib.anchorCache.create();
 
   function sampleRadius(boundaryEl) {
     const found = JLib.utils.sampleStructuralValue(
@@ -39,20 +46,17 @@ JLib.radiusProvider = (function () {
     return get(document.body);
   }
 
-  // invalidate(el) / invalidateAll() — same reason colorProvider has
-  // these: a site can change its own structural styling dynamically
-  // after this provider already sampled and cached a value, and without
-  // an explicit clear there was previously no way to recover from that,
-  // ever, for the lifetime of the page. Same manual-escape-hatch
-  // pattern, not automatic detection — no evidence a polling/observing
-  // approach is needed over an explicit call, same bar as everything
-  // else in this codebase.
+  // invalidate(el) — manual escape hatch still kept alongside the new
+  // automatic invalidation above, for the cases automatic detection
+  // genuinely can't cover (e.g. a framework re-rendering with new
+  // inline styles or structure but no attribute change on a watched
+  // node at all).
   function invalidate(el) {
     if (!el) throw new Error('JLib.radiusProvider.invalidate(el) requires an element — use invalidateAll() to clear everything.');
     cache.delete(cp.resolveAnchorBoundary(el));
   }
   function invalidateAll() {
-    cache = new WeakMap();
+    cache.invalidateAll();
   }
 
   return { get, getGlobal, invalidate, invalidateAll, DEFAULT_RADIUS };
