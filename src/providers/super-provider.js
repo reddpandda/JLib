@@ -139,6 +139,21 @@ JLib.superProvider.css = (function () {
     return JLib.fontProvider.layout.fitText(container, text, font);
   }
 
+  // invalidate(el) — cascades to every mini-provider's own
+  // invalidate(el). Same reasoning as invalidateAll() below: an author
+  // using superProvider.css as the composition point shouldn't need to
+  // separately know about, or call, five individual providers' own
+  // invalidate(el) just to clear everything this facade resolves for
+  // one specific element.
+  function invalidate(el) {
+    if (!el) throw new Error('JLib.superProvider.css.invalidate(el) requires an element — use invalidateAll() to clear everything.');
+    cp.invalidate(el);
+    JLib.radiusProvider.invalidate(el);
+    JLib.shadowProvider.invalidate(el);
+    JLib.borderProvider.invalidate(el);
+    JLib.fontProvider.invalidate(el);
+  }
+
   // invalidateAll() — cascades to every mini-provider's own
   // invalidateAll(). superProvider.css is the composition point; an
   // author using it shouldn't need to separately know about, or call,
@@ -152,5 +167,5 @@ JLib.superProvider.css = (function () {
     JLib.fontProvider.invalidateAll();
   }
 
-  return { resolve, apply, reveal, transition, fitText, invalidateAll };
+  return { resolve, apply, reveal, transition, fitText, invalidate, invalidateAll };
 })();
