@@ -34,11 +34,15 @@ JLib.modules = JLib.modules || {};
       container.appendChild(
         el('div', {}, [
           el('p', {}, [
-            'JLib is a small toolkit for building Tampermonkey userscript UIs — settings panels, notifications, and the dashboard shell you\u2019re looking at right now. It\u2019s split into three pieces: ',
-            el('strong', {}, ['core']),
-            ' (the foundational, non-visual plumbing and reusable UI primitives), ',
+            'JLib is a small toolkit for building Tampermonkey userscript UIs — settings panels, notifications, and the dashboard shell you\u2019re looking at right now. Its source is split into ',
+            el('strong', {}, ['services']),
+            ', ',
+            el('strong', {}, ['providers']),
+            ', and ',
+            el('strong', {}, ['elements']),
+            ' (the non-visual plumbing, environment-sampling logic, and reusable UI primitives underneath), plus ',
             el('strong', {}, ['modules']),
-            ' (full features like this settings panel), and whatever a userscript author registers on top.',
+            ' (full features like this settings panel) and whatever a userscript author registers on top.',
           ]),
           el('p', {}, [
             'All settings and preferences are stored locally via Tampermonkey\u2019s own storage \u2014 nothing here makes network requests or reports usage anywhere. Open source, MIT licensed.',

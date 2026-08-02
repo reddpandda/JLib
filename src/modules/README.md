@@ -1,9 +1,8 @@
 # src/modules/
 
-> Verified against commit `3c8011f` (2026-08-01) — if this folder has
-> moved since, treat contents as unconfirmed. `settings-panel/`'s
-> entries below are header-comment-only; full bodies (`navigation.js`
-> especially) are still pending a full read (Pass B).
+> Verified against `3c8011f` + Pass B (2026-08-02) — if this folder has
+> moved since, treat contents as unconfirmed. Every file below,
+> including all of `settings-panel/`, has now been fully read.
 
 Full features, built on `JLib.moduleBase` (see
 `../services/module-lifecycle.js`) so header/section markup is identical
@@ -17,16 +16,14 @@ explanation: see [../../Reference.md](../../Reference.md).
 
 ## settings-panel/
 
-*Contents confirmed only from each file's own header comment this
-pass — a real read of the bodies (`navigation.js` especially, 549
-lines) is still pending. Treat the descriptions below as a map of what
-exists, not a full explanation of how it works — that's the gap this
-whole subfolder still has in [../../Reference.md](../../Reference.md)
-too.*
+All four files build onto a shared, intentionally private `JLib._sp`
+namespace — not part of the public API a userscript author calls
+directly. Full reasoning for each in
+[../../Reference.md](../../Reference.md).
 
 | File | What it is |
 |---|---|
 | `validator.js` | Settings Panel's own "wrong door" config validation — bounded strictly to config an author directly supplies to `settingsPanel.create()`. Each check is a confirmed silent-misbehavior path (a typo that would otherwise produce a permanently invisible feature, a dependency check that always evaluates false, two rows silently overwriting the same storage key). |
 | `schema-dispatch.js` | Feature-type dispatch — given a feature definition, the current scope, and the live settings object, renders the right row (boolean/enum/number/text/action/custom). |
-| `navigation.js` | *Largest file in this folder, 549 lines — Pass B target.* Core panel behavior: deep linking, breadcrumb/history navigation, content rendering, mount/unmount, `buildVariant()`/`create()`. |
-| `chrome-config.js` | The shared "Panel Settings" chrome (theme/position/animations/shortcut/export-import) expressed as real schema features rather than bespoke rows. Loads last in this folder specifically — it's the final assembly point where `JLib.modules.settingsPanel` itself gets built from what the other three files registered. |
+| `navigation.js` | Largest file in the folder (549 lines). Deep linking, a real breadcrumb/history stack (full view-snapshot restore, not just tree-parent), export/import, tokenized search past an 8-feature threshold, and `mount()`/`buildVariant()` tying it together into one per-instance state object every extracted function shares by reference. |
+| `chrome-config.js` | The shared "Panel Settings" chrome (theme/language/animations/position/shortcut/export-import) expressed as real schema features rather than bespoke rows. Loads last in this folder specifically — it's the final assembly point where `JLib.modules.settingsPanel` itself gets built from what the other three files registered. |

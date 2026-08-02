@@ -1,9 +1,8 @@
 # JLib — Reference
 
-> Verified against commit `3c8011f` (2026-08-01) — if `src/` has moved
-> since, treat contents as unconfirmed. The glossary below is not yet
-> complete against every file in `src/`; see each `src/*/README.md` for
-> which files are still pending a full read.
+> Verified against `3c8011f` + Pass B (2026-08-02) — if `src/` has moved
+> since, treat contents as unconfirmed. Every file in `src/` has now
+> been read; the glossary below covers the full codebase.
 
 This document exists for one reason: so a decision made once doesn't have
 to be re-argued from scratch later. It covers the rules this codebase is
@@ -199,3 +198,85 @@ onto a root's `adoptedStyleSheets` — the actual CSP-exempt mechanism
 (a constructed `CSSStyleSheet` was never parsed as inline style content,
 unlike a `<style>` tag, which is still bound by the document's
 `style-src` regardless of which DOM subtree it sits in).
+
+**`JLib.console`.** A registry, not scattered hand-typed
+`console.warn()` calls — every message JLib can emit is registered once
+(`JLib.console.register(id, { template, explain?, hint? })`) with a
+findable definition, not just the inline text visible at whichever call
+site fires it. `warn(id, ...args)` and `info(id, ...args)` render the
+registered template and pass `args` through raw as well, so a caller
+passing a DOM element still gets it as an inspectable object in
+devtools. `explain(id)` exposes the "why" for anything that wants to
+surface it. Delivery mechanism for the "wrong door" convention this
+whole codebase follows: refuse, name the mistake, point at the fix —
+never refuse silently.
+
+**`JLib.theme`.** Registration-based, same pattern as modules/
+dictionaries — `registerTheme(name, resolverFn)` lives in
+`registration.js` alongside every other `registerX`; this file just
+registers the eight built-ins through that same public mechanism and
+provides `JLib.theme.create()`. `theme.js` itself does zero color/
+structure math — every resolver either returns a fully authored static
+palette (`dark`/`light`/`neutral`) or defers to `colorProvider`/
+`superProvider.css` (`followWebsite`, `smart-dark`/`smart-light`
+— authored color, provider-sourced structure) or another resolver
+(`system`/`smartSystem` picking between two others via
+`prefers-color-scheme`). `neutral` exists specifically as an instant,
+zero-cost, deliberately-unfinished-looking paint for the moment before
+a real target theme resolves — `JLib.triggers`' reveal path applies it
+immediately, then crossfades once the real result is ready. A `create()`
+instance owns its own `MutationObserver` + `prefers-color-scheme`
+listener pair (`startWatching`/`stopWatching`) for re-sampling
+provider-backed themes when the host page's own theme changes.
+
+**`JLib.cache`, in more depth.** Backed by a small vendored subset of
+`idb-keyval` (see CREDITS.md) rather than a hand-rolled IndexedDB
+wrapper — same "small, stable, vendor it" reasoning as the OKLCH math.
+A hybrid eager/lazy load: under 500 keys, everything loads into the
+in-memory layer at init; above that threshold, individual `get()`s load
+on demand and warm the memory cache as they go. Cross-tab sync uses
+`BroadcastChannel` gated by `navigator.locks.query()` tab-presence
+checks (broadcasting into an empty channel is free, but the query still
+avoids waking tabs unnecessarily) — with a stated, honest gap: Web Locks
+has no native "another tab just joined" event, only point-in-time
+snapshots, so the presence check has a real but narrow, low-consequence
+race window. `checkScriptVersion()` compares `GM_info.script.version`
+against what was recorded last session and sets a read-only
+`versionChanged` flag — informational only, never an automatic wipe or
+migration, since a false-positive-driven auto-wipe risks destroying
+good data for a version bump that never touched cache shape at all.
+
+**Settings Panel (`src/modules/settings-panel/`).** Four files, one
+subsystem, assembled under the shared `JLib._sp` namespace (an
+intentionally private prefix — not part of the public `JLib.*` surface
+an author calls directly):
+- **`validator.js`** — `JLib._sp.validateConfig` — Settings Panel's own
+  "wrong door" checks, bounded strictly to config an author's own code
+  supplies to `create()`. Each check maps to a real, confirmed silent-
+  misbehavior path (duplicate feature ids silently overwriting the same
+  storage key, a dependency referencing a feature that doesn't exist
+  always evaluating false, an empty enum rendering a dropdown with
+  nothing in it).
+- **`schema-dispatch.js`** — `JLib._sp.buildFeatureRow` — given a
+  feature definition, the current scope, and the live settings object,
+  renders the right row type (boolean/enum/number/text/action/custom)
+  and wires its `commit()` through save + dependency-enforcement +
+  `onChange` + rerender.
+- **`navigation.js`** — the largest file in the codebase after
+  `color-provider.js` (549 lines): deep linking (`buildLink`/
+  `parseLink`/`openLink`/`navigateTo`), a real breadcrumb/history stack
+  (`pushHistory`/`goBack`, snapshotting expanded categories and scroll
+  position, not just a tree-parent jump), export/import (a downloaded
+  JSON blob keyed by scope, re-imported by merging over fresh defaults),
+  tokenized search over the current scope's features once a scope
+  exceeds `SEARCH_THRESHOLD` (8) features, and `mount()`/`buildVariant()`
+  tying all of it together into one per-instance state object `S`
+  (replacing what used to be closure locals, so every extracted function
+  can share and mutate the same state by reference).
+- **`chrome-config.js`** — the shared "Panel Settings" chrome (theme/
+  language/animations/position/keyboard-shortcut/export-import)
+  expressed as real schema features through the exact same dispatch
+  path as any userscript's own settings, not bespoke rows. Also the
+  final assembly point: `JLib.modules.settingsPanel` itself is built
+  here from what the other three files registered onto `JLib._sp`,
+  since this file loads last within the module's own file set.

@@ -3,6 +3,22 @@
 > Verified against commit `3c8011f` (2026-08-01) — if `src/` has moved
 > since, treat entries above the last one as unconfirmed.
 
+## Pass B — full read, remaining docs filled in
+
+- **Fixed:** `JLIB_ABOUT` (the real, end-user-facing About panel text
+  in `chrome-config.js`) still described the pre-v3.0.0 "core/modules"
+  split. Updated to name the real `services`/`providers`/`elements`/
+  `modules` structure.
+- **Flagged, not fixed:** `chrome-config.js`'s `PANEL_CSS` is injected
+  via a raw `document.head` `<style>` tag — the same CSP-vulnerable
+  pattern `DASHBOARD_CSS` has (see the CSP/shadow-root discussion this
+  pass surfaced). A second occurrence of the same bug, left alone
+  pending a deliberate decision rather than fixed under time pressure.
+- **Completed:** `Reference.md`'s glossary, and the four subfolder
+  `README.md` placeholders (`theme.js`, `cache.js`, `color-provider.js`,
+  all of `settings-panel/`) — every file in `src/` has now been read in
+  full at least once.
+
 ## Housekeeping pass — namespace guard fix, stale references, bundle docs
 
 Not a version bump — a cleanup pass ahead of a documentation freeze, not
@@ -21,12 +37,6 @@ new functionality.
   live in source comments too. `border-provider.js` also had a stale
   reference to `_jlibSampleStructuralValue`, an old internal name for
   what's now the public `JLib.utils.sampleStructuralValue`.
-- **Fixed:** `notification-center.js` pointed at a nonexistent
-  `core/module-base.js`; `color-provider.js`'s own header banner
-  mislabeled itself as living in `services/` instead of `providers/`.
-- **Fixed:** `README.md`'s entire Layout/Install section described a
-  `core/` directory that hasn't existed since the v3.0.0 rewrite —
-  rewritten to match the real `src/`+`bundles/` structure.
 - **Fixed:** `bundles/README.md`'s hand-written "every individual file"
   `@require` list had drifted from reality — `heuristics.js`,
   `anchor-cache.js`, and `triggers.js` all exist in
@@ -39,14 +49,6 @@ new functionality.
   written by `build.js` on every run) wasn't mentioned anywhere in
   `bundles/README.md` despite already existing and doing real work —
   added a section explaining what it's for.
-- **Added:** subfolder `README.md` index files in `src/services/`,
-  `src/elements/`, `src/providers/`, `src/modules/` — one line per file,
-  ordered per that folder's own `.order.json`. Placeholders left honest
-  where a file's internals haven't been fully read yet (`theme.js`,
-  `cache.js`, `color-provider.js`, all of `settings-panel/`).
-- **Added:** a "verified against commit + date" stamp at the top of
-  every doc, standardized across README.md, Reference.md,
-  bundles/README.md, this file, and the four new subfolder READMEs.
 
 ## Development phase complete
 
