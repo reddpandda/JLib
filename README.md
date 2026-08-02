@@ -1,20 +1,31 @@
 # JLib
 
+> Verified against commit `3c8011f` (2026-08-01) — if `src/` has moved
+> since, treat contents as unconfirmed.
+
 A small userscript toolkit — `@require`-able, no build step, no bundler.
 Plain global-namespace scripts, same as Tampermonkey expects.
 
 ## Layout
 
 ```
-core/       services.js, elements.js — foundational, non-visual pieces
-            (DOM, storage, cache, notifications, the color/font/radius/
-            shadow/border provider family, localization, module/theme/
-            script registration) and reusable visual primitives
-            (buttons, rows, modal, tabs, search)
-modules/    settings-panel.js, notification-center.js — full features,
-            each one file
-Examples/   working userscripts covering standalone mode, dashboard
-            mode, cross-tab cache sync, and localization
+src/        The real source, organized by kind — not @require-able
+            directly (well, technically you can, see bundles/README.md's
+            "Maximum" section, but bundles/ is the intended path):
+              services/   DOM, storage, cache, notifications, dedupe,
+                           appearance/navigation triggers, the discovery
+                           engine providers share, theming, localization,
+                           module/theme/script registration
+              providers/  the color/font/radius/shadow/border family
+                           plus the composing superProvider.css
+              elements/   reusable visual primitives (buttons, rows,
+                           modal, tabs, search)
+              modules/    settings-panel/ (four files) and
+                           notification-center.js — full features
+bundles/    What a userscript actually @requires — generated from src/
+            by bundles/build.js, never hand-edited. See
+            bundles/README.md for the exact @require lines and load
+            order.
 ```
 
 For the reasoning behind how this is built — the rules every part of it
@@ -25,14 +36,12 @@ shipped, what grew, what was cut, what might come later) see
 
 ## Install
 
-`@require` in order — `core/` first, then whichever `modules/` you want,
-pinned to a tag once one exists.
-
-```
-// @require https://raw.githubusercontent.com/reddpandda/JLib/main/core/services.js
-// @require https://raw.githubusercontent.com/reddpandda/JLib/main/core/elements.js
-// @require https://raw.githubusercontent.com/reddpandda/JLib/main/modules/settings-panel.js
-```
+See [bundles/README.md](bundles/README.md) for the current, real
+`@require` lines — both the 5-line minimum bundle set and the full
+unbundled list for development. Don't hand-copy a list from anywhere
+else (including an older version of this file); `bundles/README.md` is
+the one place that list is meant to be kept accurate against
+`src/*/​.order.json`.
 
 Then, before anything else, register your script:
 

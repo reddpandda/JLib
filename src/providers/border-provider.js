@@ -30,7 +30,7 @@
  * ensureContrast, toCssRgb — the real color pipeline, not just the
  * anchor-boundary utility this file used before), JLib.anchorCache
  * (shared auto-invalidating cache), JLib.utils
- * (_jlibSampleStructuralValue is NOT used here — border needs the
+ * (JLib.utils.sampleStructuralValue is NOT used here — border needs the
  * color component split out from the width/style, which the shared
  * generic-string helper can't do, so this file scans candidates
  * itself using the same shape).

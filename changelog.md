@@ -1,5 +1,53 @@
 # Changelog
 
+> Verified against commit `3c8011f` (2026-08-01) — if `src/` has moved
+> since, treat entries above the last one as unconfirmed.
+
+## Housekeeping pass — namespace guard fix, stale references, bundle docs
+
+Not a version bump — a cleanup pass ahead of a documentation freeze, not
+new functionality.
+
+- **Fixed:** `module-lifecycle.js` was missing its namespace guard
+  (`var JLib = typeof JLib !== 'undefined' ? JLib : {};`) on the
+  `moduleBase` section — the one file in the whole codebase where a
+  first-loaded require would have thrown instead of degrading. Guard
+  added at the top of the file; the redundant second guard further down
+  the same file removed.
+- **Fixed:** a handful of comments still named `dom-toolkit.js`,
+  `settings-schema.js`, and other pre-rewrite provenance (`dom.js`,
+  `events.js`, `notifications.js`, `module-lifecycle.js`) — that history
+  is already in the v3.0.0/v4.0.0 entries below, so it didn't need to
+  live in source comments too. `border-provider.js` also had a stale
+  reference to `_jlibSampleStructuralValue`, an old internal name for
+  what's now the public `JLib.utils.sampleStructuralValue`.
+- **Fixed:** `notification-center.js` pointed at a nonexistent
+  `core/module-base.js`; `color-provider.js`'s own header banner
+  mislabeled itself as living in `services/` instead of `providers/`.
+- **Fixed:** `README.md`'s entire Layout/Install section described a
+  `core/` directory that hasn't existed since the v3.0.0 rewrite —
+  rewritten to match the real `src/`+`bundles/` structure.
+- **Fixed:** `bundles/README.md`'s hand-written "every individual file"
+  `@require` list had drifted from reality — `heuristics.js`,
+  `anchor-cache.js`, and `triggers.js` all exist in
+  `src/services/.order.json` and ship in the real `services.js` bundle,
+  but weren't in the README's list at all. Following the old list
+  literally would have `@require`d providers before the `anchorCache`
+  they depend on. Section rewritten to say plainly that `.order.json`
+  is the real source of truth, not a prose list.
+- **Documented:** `bundles/.version.json` (sourceHash/lastBuilt/builtFrom,
+  written by `build.js` on every run) wasn't mentioned anywhere in
+  `bundles/README.md` despite already existing and doing real work —
+  added a section explaining what it's for.
+- **Added:** subfolder `README.md` index files in `src/services/`,
+  `src/elements/`, `src/providers/`, `src/modules/` — one line per file,
+  ordered per that folder's own `.order.json`. Placeholders left honest
+  where a file's internals haven't been fully read yet (`theme.js`,
+  `cache.js`, `color-provider.js`, all of `settings-panel/`).
+- **Added:** a "verified against commit + date" stamp at the top of
+  every doc, standardized across README.md, Reference.md,
+  bundles/README.md, this file, and the four new subfolder READMEs.
+
 ## Development phase complete
 
 Everything below this note is the initial build-out — new systems,

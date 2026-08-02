@@ -1,5 +1,10 @@
 # JLib — Reference
 
+> Verified against commit `3c8011f` (2026-08-01) — if `src/` has moved
+> since, treat contents as unconfirmed. The glossary below is not yet
+> complete against every file in `src/`; see each `src/*/README.md` for
+> which files are still pending a full read.
+
 This document exists for one reason: so a decision made once doesn't have
 to be re-argued from scratch later. It covers the rules this codebase is
 built on and what the internal building blocks actually are — a quick
@@ -129,3 +134,68 @@ DOM once per mini-provider it called instead of once total.
 applied consistently across every extensible surface in the codebase.
 Each refuses (warns, does not silently substitute a default) without its
 prerequisite met.
+
+**`JLib.triggers`.** Decides WHEN something runs, so nothing fires
+eagerly just because a page loaded. Two structurally separate halves:
+`watch(key, selector, callback, opts?)` is passive — fires when
+something matching `selector` appears under `opts.root` (default the
+light DOM), checked immediately on registration in case the awaited
+element already exists. `fire(key, fn)` is active — an explicit call
+site wanting dedup protection against rapid repeat calls, routed through
+`JLib.dedupe` rather than reinventing it. `watch()`'s matches are never
+deduped through `fire()` — each is a genuinely distinct new element, not
+a redundant repeat of the same demand.
+
+**`JLib.anchorCache`.** A `WeakMap`-by-boundary-element cache with
+automatic `MutationObserver`-based invalidation (default watching
+`class`/`style`/`data-theme` changes, debounced), extracted from
+`colorProvider`'s own pattern so `radius`/`shadow`/`border`/`font`
+providers can share one implementation instead of four. Each `create()`
+call gets its own independent observer and tracking, so multiple
+provider caches can coexist without cross-interference. Tracks live
+boundaries via `WeakRef` + `FinalizationRegistry`, not raw references,
+so a removed element can actually be garbage collected.
+
+**`JLib.heuristics`.** The provider-agnostic discovery engine every
+provider's sampling builds on — knows markup, not rendering.
+`capture(rootEl?)` collects raw tag/class/attribute data per element;
+`rank(captured, keywords)` scores that data via real BM25 (proper
+tokenization, corpus-derived same-page stopwords, length-normalized),
+sorted descending, zero-score entries dropped. Callers supply their own
+keyword query (`colorProvider`'s is accent/brand/nav/..., a structural
+provider's might be rounded/corner/pill/...) — this file has no opinion
+on what the keywords mean. `withScrollLock(fn)` runs `fn()` behind a
+real native `<dialog>` blocking all input, protecting a capture-through-
+read span against a custom-scroll-library SPA recycling the DOM
+elements underneath it mid-read — a danger synchronous execution alone
+does not rule out, since a JS-driven scroll handler isn't bound by the
+same "can't interleave with sync code" guarantee native scroll is.
+
+**Module lifecycle (`JLib.moduleBase`, `JLib.render`).**
+`JLib.moduleBase.create(config)` is the shared scaffold every module is
+built through — header/section markup and the `{ id, label, order,
+mount, unmount }` shape the dashboard expects, so module authors don't
+each reinvent it. `JLib.render()` (or `JLib.scheduleRender()`, deferred
+to a microtask so it's the last thing to run for that page load) builds
+exactly one modal shell regardless of module count — what changes is
+what's inside it: a single module with no dashboard chrome at
+`count === 1`, a menu-driven dashboard with an unregistered, uncounted
+"cog" settings surface at `count >= 2`. A module never owns its own
+modal; `services.shell` is how it reaches the one that always exists.
+
+**`JLib.events`.** One delegated listener on a stable container, matched
+against dynamically-added descendants via `closest()` — the shared
+answer to "handle clicks on elements that don't exist yet."
+
+**`JLib.dom` / `JLib.shadow`.** `JLib.dom` is pure DOM construction
+(`el`/`h` builder, `$`/`$$` selector shortcuts) — no privileged APIs, no
+opinion on where anything ends up. `JLib.shadow` owns the one shared
+`closed`-mode shadow root all of JLib's own chrome renders into, created
+lazily on first use. `isOurRoot(rootNode)` is reference-equality only —
+the exact test `colorProvider`'s sampling-fidelity buckets need to know
+whether an element is JLib's own chrome or real page content.
+`adoptStylesheet(sheet, rootNode)` pushes a constructable stylesheet
+onto a root's `adoptedStyleSheets` — the actual CSP-exempt mechanism
+(a constructed `CSSStyleSheet` was never parsed as inline style content,
+unlike a `<style>` tag, which is still bound by the document's
+`style-src` regardless of which DOM subtree it sits in).

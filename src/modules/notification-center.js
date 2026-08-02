@@ -3,7 +3,7 @@
  * history. Doesn't emit notifications itself, just lists what the core
  * has already shown/dismissed. Built on JLib.moduleBase so its header
  * and section markup are identical to every other module rather than
- * hand-rolled — see core/module-base.js.
+ * hand-rolled — see services/module-lifecycle.js.
  *
  * Depends on: JLib.dom, JLib.moduleBase, JLib.elements.button
  */
