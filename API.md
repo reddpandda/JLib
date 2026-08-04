@@ -1,6 +1,7 @@
 # JLib — API
 
 <style>
+  
 :root {
   --jlib-accent: #6c5ce7;
   --jlib-accent-soft: #6c5ce71a;
@@ -38,6 +39,7 @@ dd { margin-left: 1.2em; border-left: 2px solid var(--jlib-accent-soft);
   padding-left: 1em; margin-bottom: 0.6em; }
 details { margin: 0.6em 0; border: 1px solid var(--jlib-border); border-radius: 6px; padding: 0.5em 1em; }
 summary { cursor: pointer; font-weight: 600; color: var(--jlib-accent); }
+  
 </style>
 
 > Verified against commit `3c8011f` + Pass B (2026-08-02). **Read this note before anything else below.**
