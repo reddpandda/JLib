@@ -148,6 +148,61 @@ Images are out of scope except in a genuinely limited capacity
 or styled text, since an image can't be copied, searched, grepped, or
 reflowed, and won't adapt to the reader's light/dark theme.
 
+## Prose voice and tone
+
+Not mechanically enforced — see the note at the end of this section for
+why.
+
+**Tone.** Direct, like a knowledgeable peer explaining something to
+someone competent — not a marketing page, not a stiff spec. Reasoning
+is shown, not just conclusions ("no clean fix was found... accepted as
+a known cosmetic issue," not just "known issue"). Limitations are
+stated plainly where they're relevant, never smoothed over. Dry
+restraint over personality-for-its-own-sake — a little wit is fine
+where it already fits naturally, never forced to fill space.
+
+**Person.** Narrative/instructional content (Onboarding.md, the README
+family) addresses the reader as "you." Reference and architectural
+content (API.md entries, Architecture.md's rules, Glossary.md's
+entries) stays impersonal — *except* inside an `Examples` block, which
+switches back to "you" even within an otherwise impersonal entry.
+
+**Tense.** Present tense for current behavior. Past tense only for
+changelog entries and explicitly historical narration (Scope.md's
+*Exceeded*/*Cut* sections).
+
+**Voice.** Active, not passive. Definitions lead with the verb, subject
+dropped ("Establishes your script's identity," not "This function
+establishes...").
+
+**Sentence-level conventions:**
+- Sentence case for every heading ("Providers must provide," not
+  "Providers Must Provide").
+- Serial (Oxford) comma.
+- No padding politeness in instructions — no "please," "just," or
+  "simply" as filler.
+- Link text is always descriptive of its destination, never "click
+  here" or "this link."
+- No hype language — "powerful," "seamless," "robust" excluded. "Real"
+  is used narrowly (genuinely functional, not a stub), not as an
+  intensifier.
+- Terminology stays fixed once chosen ("userscript," not "user
+  script").
+
+**This project doesn't use Vale or an equivalent linter for any of the
+above** — markdownlint and Vale were both evaluated and explicitly
+skipped: markdownlint's generic hygiene checks are mostly cosmetically
+invisible against what the structural shapes already cover, and Vale's
+pattern-matching is a strictly weaker version of the AI-review process
+already in use here, since it can't judge tone or voice consistency in
+any real sense the way a contextual read against this section can.
+Prose is hand-authored and checked against this section via AI review
+instead of a mechanical pass. These rules are always the target and
+reasonably well kept to in practice, but nothing enforces them the way
+the structural shapes are enforced — small drift across the doc set
+should be expected as normal, not treated as a bug when it's eventually
+noticed.
+
 ## The embedded stylesheet
 
 **Note (Pass A): this section describes an earlier per-file, top-of-file
