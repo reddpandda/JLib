@@ -1,0 +1,45 @@
+name: Build docs
+
+# Runs the builder on every push to this branch. Success commits the
+# fully-resolved output to built/ — on THIS branch, staging only.
+# Pushing built/ onto main is a deliberately separate, manual step
+# (see AGENTS.md for why: auto-pushing straight to main risks silently
+# overwriting a hand-fixed hotfix nobody told this branch about).
+
+on:
+  push:
+    branches:
+      - docs
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout docs branch
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Run builder
+        run: node build/build.js
+
+      - name: Check links (raw existence + anchors)
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: --offline --include-fragments 'built/**/*.md'
+          fail: true
+
+      - name: Commit built/ output back to docs branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add built/
+          git diff --cached --quiet || git commit -m "Build: resolve docs [skip ci]"
+          git push
