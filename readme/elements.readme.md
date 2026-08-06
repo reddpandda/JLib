@@ -6,7 +6,7 @@
 > **Links to:** Architecture.md ×1
 
 Reusable visual primitives. Order: see `.order.json`. Deep explanation:
-see [../../Architecture.md](../../Architecture.md).
+see [Architecture.md]({{link:architecture}}).
 
 All of these share one styling pattern worth naming once instead of
 repeating per row: a single constructable `CSSStyleSheet`, parsed once,

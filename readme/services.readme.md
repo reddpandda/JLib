@@ -9,7 +9,7 @@
 Foundational, non-visual pieces. Order and dependency chain: see
 `.order.json` (`bundles/build.js` reads this directly — it's the real
 source of truth, not this list). Deep explanation of why any of this
-works the way it does: see [../../Architecture.md](../../Architecture.md).
+works the way it does: see [Architecture.md]({{link:architecture}}).
 
 | File | What it is |
 |---|---|
@@ -27,4 +27,4 @@ works the way it does: see [../../Architecture.md](../../Architecture.md).
 | `i18n.js` | Two-tier dictionary lookup (bare-string default, qualified variant like `"Save (verb)"` where English itself would phrase something differently by role). English is a normal registered dictionary that happens to register first. Default-conflict resolution denies both and falls back to English rather than trusting `@require` order. |
 | `notifications.js` | Headless core (queue + staling engine + dismissal memory). `toast` is one of three presenters (toast/banner/modal) driven by the same core. |
 | `module-lifecycle.js` | `JLib.moduleBase` — the shared header/section scaffold every module is built through. `JLib.render()`/`scheduleRender()` — builds the one dashboard shell, single-module or menu-driven depending on registered count. |
-| `cache.js` | IndexedDB-backed (via a vendored `idb-keyval` subset — see [../../CREDITS.md](../../CREDITS.md)), cross-tab-synced (`BroadcastChannel` + Web-Locks presence check + per-key logical clock) non-settings persistent storage, hybrid eager/lazy loading, plus a `versionChanged` flag from comparing `GM_info.script.version` across sessions. |
+| `cache.js` | IndexedDB-backed (via a vendored `idb-keyval` subset — see [CREDITS.md]({{link:credits}})), cross-tab-synced (`BroadcastChannel` + Web-Locks presence check + per-key logical clock) non-settings persistent storage, hybrid eager/lazy loading, plus a `versionChanged` flag from comparing `GM_info.script.version` across sessions. |
