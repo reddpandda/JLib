@@ -1,1 +1,24 @@
-<placeholder>
+{
+  "$comment": "doc-id -> real path on main once built. {{link:id}} tokens resolve against this. Topic docs stay flat under docs/ on both branches, so links between them never need path resolution — only readme/*.readme.md files (which move from flat readme/ to nested real locations) actually need it.",
+  "targets": {
+    "onboarding": "docs/Onboarding.md",
+    "api": "docs/API.md",
+    "architecture": "docs/Architecture.md",
+    "glossary": "docs/Glossary.md",
+    "scope": "docs/Scope.md",
+    "changelog": "docs/changelog.md",
+    "credits": "docs/CREDITS.md",
+    "formatting": "docs/Formatting.md",
+    "enforced": "docs/Enforced.md",
+    "license": "LICENSE"
+  },
+  "readmeOutputs": {
+    "$comment": "source path on docs branch -> real destination path on main. The builder writes each into built/ staging at this same relative path, then a separate manual step copies built/ onto main.",
+    "readme/main.readme.md": "README.md",
+    "readme/elements.readme.md": "src/elements/README.md",
+    "readme/modules.readme.md": "src/modules/README.md",
+    "readme/providers.readme.md": "src/providers/README.md",
+    "readme/services.readme.md": "src/services/README.md",
+    "readme/bundles.readme.md": "bundles/README.md"
+  }
+}
